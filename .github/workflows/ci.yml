@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cpu:
+    name: CPU engine + tokenizers
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install numpy
+      - run: make cpu
+      - run: make test
+
+  cuda-emulated:
+    name: CUDA kernels (CPU emulator, no GPU)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install numpy
+      - run: make cpu
+      - run: make test-emu
+
+  cuda-compile:
+    name: CUDA build (nvcc, sm_75 + sm_80 + sm_89)
+    runs-on: ubuntu-24.04
+    container: nvidia/cuda:12.4.1-devel-ubuntu22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update -qq && apt-get install -y -qq make
+      - run: make cuda ARCH=sm_75
+      - run: make clean && make cuda ARCH=sm_80
+      - run: make clean && make cuda ARCH=sm_89
+
+  webgpu:
+    name: WebGPU backend (headless Chromium, SwiftShader)
+    runs-on: ubuntu-24.04
+    # Software WebGPU availability differs between Chromium builds; keep this job informational.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install numpy playwright
+      - run: python -m playwright install --with-deps chromium
+      - run: make cpu
+      - run: python tests/web_test.py

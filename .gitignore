@@ -1,0 +1,9 @@
+build/
+models/
+*.bin
+*.csv
+*.nsys-rep
+*.ncu-rep
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store

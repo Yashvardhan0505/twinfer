@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>twinfer - WebGPU LLM demo</title>
+  <meta name="description" content="SmolLM2 running entirely in your browser on hand-written WGSL compute shaders.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="logo">tw</span>
+      <div>
+        <h1>twinfer</h1>
+        <p>SmolLM2 running in your browser on hand-written WebGPU kernels.</p>
+      </div>
+    </div>
+    <a class="repo" href="https://github.com/Yashvardhan0505/twinfer">GitHub</a>
+  </header>
+
+  <section class="panel" id="loader">
+    <div class="row">
+      <label for="model-select">Model</label>
+      <select id="model-select"></select>
+      <button id="load-btn" class="primary">Load</button>
+      <label class="file-btn" title="Pick a folder with config.json, tokenizer.json and *.safetensors">
+        <input id="folder-input" type="file" webkitdirectory multiple hidden>
+        or open a local folder
+      </label>
+    </div>
+    <div class="progress" id="progress" hidden><div class="bar" id="bar"></div><span id="progress-text"></span></div>
+    <div class="info" id="info">The weights download from Hugging Face the first time, then the browser caches them.</div>
+  </section>
+
+  <main class="panel chat" id="chat">
+    <div class="empty" id="empty">
+      <p>Load a model and ask it something. It all runs on your own GPU, nothing gets sent to a server.</p>
+    </div>
+  </main>
+
+  <section class="panel composer">
+    <textarea id="input" rows="2" placeholder="Ask something..." disabled></textarea>
+    <div class="buttons">
+      <button id="send-btn" class="primary" disabled>Send</button>
+      <button id="stop-btn" disabled>Stop</button>
+    </div>
+    <div class="settings">
+      <label>temperature <input id="temp" type="number" min="0" max="2" step="0.1" value="0.6"></label>
+      <label>top-p <input id="top-p" type="number" min="0" max="1" step="0.05" value="0.9"></label>
+      <label>max tokens <input id="max-new" type="number" min="1" max="2048" step="1" value="256"></label>
+      <button id="reset-btn" class="link">new chat</button>
+    </div>
+  </section>
+
+  <footer class="stats" id="stats">no generation yet</footer>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

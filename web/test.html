@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>twinfer WebGPU test harness</title><link rel="icon" href="data:,"></head>
+<body>
+<pre id="log">running…</pre>
+<script type="module">
+// Driven by tests/web_test.py: runs the JS tokenizer and the WebGPU engine on a model folder and
+// publishes the results on window.__result for comparison with the C++ engine.
+import { Tokenizer } from "./src/tokenizer.js";
+import { fetchBytes, fetchJson, parseSafetensors } from "./src/safetensors.js";
+import { Engine, initDevice } from "./src/engine.js";
+
+const qs = new URLSearchParams(location.search);
+const out = {};
+try {
+  const input = await fetchJson(qs.get("input"));
+  for (const m of input.models) {
+    const r = (out[m.name] = {});
+    const tok = new Tokenizer(await fetchJson(m.path + "tokenizer.json"));
+    r.encodes = input.strings.map((s) => tok.encode(s));
+    r.roundtrip = input.strings.map((s, i) => tok.decode(r.encodes[i], false) === s);
+    if (!m.engine) continue;
+    const config = await fetchJson(m.path + "config.json");
+    const weights = parseSafetensors(await fetchBytes(m.path + "model.safetensors"));
+    const { device, info } = await initDevice();
+    out.adapter = `${info.vendor || "?"} / ${info.architecture || "?"}`;
+    const eng = await Engine.create({ device, config, weights, maxSeq: 256 });
+    r.logits = [];
+    for (let i = 0; i < input.tokens.length; i++) r.logits.push(Array.from(await eng.forward([input.tokens[i]], i)));
+    // Multi-token call + GPU argmax path.
+    r.batch_argmax = await eng.forward(input.tokens, 0, { greedy: true });
+    // Greedy generation.
+    const prompt = tok.encode(input.gen_prompt);
+    const gen = [];
+    let next = await eng.forward(prompt, 0, { greedy: true });
+    let pos = prompt.length;
+    for (let i = 0; i < input.gen_tokens; i++) {
+      gen.push(next);
+      if (i + 1 < input.gen_tokens) next = await eng.forward([next], pos++, { greedy: true });
+    }
+    r.gen_text = tok.decode(gen);
+    r.gen_bytes = Array.from(gen.flatMap((id) => Array.from(tok.tokenBytes(id))));
+  }
+} catch (e) {
+  out.error = String((e && e.stack) || e);
+}
+document.getElementById("log").textContent = JSON.stringify(out, null, 1).slice(0, 4000);
+window.__result = out;
+</script>
+</body>
+</html>
