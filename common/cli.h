@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "engine.h"
+#include "platform.h"
 
 namespace tf {
 
@@ -74,17 +75,19 @@ inline std::vector<int> parse_ids(const std::string& s) {
   return v;
 }
 
-inline Options parse_options(int argc, char** argv, bool cuda) {
+inline Options parse_options(const std::vector<std::string>& args, bool cuda) {
   Options o;
+  const int argc = static_cast<int>(args.size());
+  const char* prog = argc > 0 ? args[0].c_str() : "twinfer";
   auto need = [&](int& i) -> std::string {
     if (i + 1 >= argc) {
-      std::fprintf(stderr, "missing value for %s\n", argv[i]);
+      std::fprintf(stderr, "missing value for %s\n", args[i].c_str());
       std::exit(2);
     }
-    return argv[++i];
+    return args[++i];
   };
   for (int i = 1; i < argc; ++i) {
-    std::string a = argv[i];
+    const std::string& a = args[i];
     if (a == "-m" || a == "--model") o.model = need(i);
     else if (a == "-p" || a == "--prompt") o.prompt = need(i);
     else if (a == "-n" || a == "--max-new") o.max_new = std::atoi(need(i).c_str());
@@ -103,15 +106,15 @@ inline Options parse_options(int argc, char** argv, bool cuda) {
     else if (a == "--bench") o.bench_tokens = std::atoi(need(i).c_str());
     else if (cuda && a == "--int8") o.int8 = true;
     else if (cuda && a == "--no-graph") o.cuda_graph = false;
-    else if (a == "-h" || a == "--help") { print_usage(argv[0], cuda); std::exit(0); }
+    else if (a == "-h" || a == "--help") { print_usage(prog, cuda); std::exit(0); }
     else {
       std::fprintf(stderr, "unknown option %s\n", a.c_str());
-      print_usage(argv[0], cuda);
+      print_usage(prog, cuda);
       std::exit(2);
     }
   }
   if (o.model.empty()) {
-    print_usage(argv[0], cuda);
+    print_usage(prog, cuda);
     std::exit(2);
   }
   return o;
@@ -120,7 +123,8 @@ inline Options parse_options(int argc, char** argv, bool cuda) {
 using EngineFactory = std::function<std::unique_ptr<Engine>(const ModelFiles&, const Options&)>;
 
 inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_engine) {
-  Options o = parse_options(argc, argv, cuda);
+  setup_console();
+  Options o = parse_options(utf8_args(argc, argv), cuda);
   try {
     ModelFiles mf(o.model);
     Tokenizer tok(mf.tokenizer_path());

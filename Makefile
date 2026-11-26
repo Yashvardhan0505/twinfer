@@ -13,7 +13,7 @@ CXXFLAGS ?= -O3 -march=native -std=c++17 -Wall -Wextra -fopenmp
 NVFLAGS  ?= -O3 -std=c++17 -arch=$(ARCH) -lineinfo -Xcompiler -Wall
 BUILD    := build
 
-COMMON_SRC := common/model_files.cpp common/tokenizer.cpp
+COMMON_SRC := common/model_files.cpp common/tokenizer.cpp common/platform.cpp
 COMMON_HDR := $(wildcard common/*.h)
 CUDA_HDR   := $(wildcard cuda/*.h cuda/*.cuh cuda/kernels/*.cuh)
 
