@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,9 +24,21 @@ class Sampler {
 
   int sample(const float* logits, int n) {
     if (greedy()) return argmax(logits, n);
+    if (n <= 1) return 0;
+    // NaN / +inf logits mean something upstream overflowed (fp16 on the GPU, say). Report that
+    // instead of sampling from garbage.
+    float mx = -INFINITY;
+    int best = 0;
+    for (int i = 0; i < n; ++i) {
+      if (std::isnan(logits[i])) throw std::runtime_error("sampler: the logits contain NaN");
+      if (logits[i] > mx) {
+        mx = logits[i];
+        best = i;
+      }
+    }
+    if (mx == INFINITY) throw std::runtime_error("sampler: the logits contain +inf");
+    if (mx == -INFINITY) throw std::runtime_error("sampler: every logit is -inf");
     // Softmax with temperature.
-    float mx = logits[0];
-    for (int i = 1; i < n; ++i) mx = std::max(mx, logits[i]);
     probs_.resize(static_cast<size_t>(n));
     double sum = 0.0;
     for (int i = 0; i < n; ++i) {
@@ -43,11 +56,17 @@ class Sampler {
       return n - 1;
     }
     // Nucleus sampling: tokens below (1-p)/(n-1) can never be in the nucleus, skip them before sorting.
+    // The most likely token always is in it. Keeping it explicitly also means the list can't end up
+    // empty when rounding (or a huge temperature) puts every probability under the cutoff.
     const float cutoff = (1.0f - cfg_.top_p) / static_cast<float>(n - 1);
     cand_.clear();
     for (int i = 0; i < n; ++i)
-      if (probs_[i] >= cutoff) cand_.emplace_back(probs_[i], i);
-    std::sort(cand_.begin(), cand_.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+      if (probs_[i] >= cutoff || i == best) cand_.emplace_back(probs_[i], i);
+    // Ties go to the lower id, so the result doesn't depend on the standard library's sort (and
+    // matches the stable sort in web/src/sampler.js).
+    std::sort(cand_.begin(), cand_.end(), [](const auto& a, const auto& b) {
+      return a.first > b.first || (a.first == b.first && a.second < b.second);
+    });
     float cum = 0.0f;
     size_t last = cand_.size() - 1;
     for (size_t i = 0; i < cand_.size(); ++i) {

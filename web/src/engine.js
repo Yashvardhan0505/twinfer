@@ -348,6 +348,8 @@ export class Engine {
     if (greedy) result = new Uint32Array(rb.getMappedRange(0, 4))[0];
     else result = new Float32Array(rb.getMappedRange(0, this.c.vocab * 4).slice(0));
     rb.unmap();
+    // The argmax shader leaves 0xffffffff when no logit is greater than -3.4e38 (all NaN).
+    if (greedy && result >= this.c.vocab) throw new Error("argmax: no finite logit (NaN in the forward pass?)");
     return result;
   }
 }

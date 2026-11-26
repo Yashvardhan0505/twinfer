@@ -84,12 +84,16 @@ def test_cpu(r, tiny, qwen):
         r.line("test-common", f"exit code {res.returncode}", res.returncode == 0)
     else:
         print(f"[C++ unit tests] {unit} not built, skipping")
+    node = shutil.which("node")
+    if node:
+        res = subprocess.run([node, os.path.join(ROOT, "tests", "js_unit.mjs")], capture_output=True, text=True)
+        print(res.stdout + res.stderr, end="", flush=True)
+        r.line("js unit tests", f"exit code {res.returncode}", res.returncode == 0)
     print("[cpu engine vs numpy reference]")
     for name, model in (("llama-style, bf16, tied", tiny), ("qwen-style, f32, bias, untied", qwen)):
         ref = reference.forward(model, TOKENS)
         r.logits(name, ref, dump(CPU, model, TOKENS, 1), 1e-5)
     print("[tokenizer: C++ (hand-written scanners) vs JS (regex engine)]")
-    node = shutil.which("node")
     if not node:
         print("  node not found, skipping")
         return
