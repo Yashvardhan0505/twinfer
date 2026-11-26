@@ -1,15 +1,27 @@
 #include "model_files.h"
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 #include "half.h"
 #include "json.h"
@@ -18,8 +30,22 @@ namespace tf {
 
 // Files
 
+namespace {
+
+// Paths are UTF-8 strings everywhere in twinfer. std::filesystem has to be told that explicitly,
+// otherwise Windows reads them in the ANSI code page and non-ASCII folder names break.
+std::filesystem::path fs_path(const std::string& utf8) {
+#if defined(__cpp_char8_t)
+  return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
+#else
+  return std::filesystem::u8path(utf8);
+#endif
+}
+
+}  // namespace
+
 std::string read_text_file(const std::string& path) {
-  std::ifstream f(path, std::ios::binary);
+  std::ifstream f(fs_path(path), std::ios::binary);
   if (!f) throw std::runtime_error("cannot open " + path);
   std::ostringstream ss;
   ss << f.rdbuf();
@@ -27,31 +53,73 @@ std::string read_text_file(const std::string& path) {
 }
 
 bool file_exists(const std::string& path) {
-  struct stat st;
-  return ::stat(path.c_str(), &st) == 0;
+  std::error_code ec;
+  return std::filesystem::is_regular_file(fs_path(path), ec);
 }
 
+// Read-only memory map of a whole file: mmap on Linux/macOS, a file mapping on Windows.
 class MappedFile {
  public:
   explicit MappedFile(const std::string& path) {
+#ifdef _WIN32
+    const std::wstring wpath = fs_path(path).wstring();
+    file_ = CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                        nullptr);
+    if (file_ == INVALID_HANDLE_VALUE) throw std::runtime_error("cannot open " + path);
+    LARGE_INTEGER sz;
+    if (!GetFileSizeEx(file_, &sz)) fail("cannot get the size of " + path);
+    size_ = static_cast<size_t>(sz.QuadPart);
+    if (size_ == 0) return;  // CreateFileMapping rejects empty files; callers report it as truncated
+    mapping_ = CreateFileMappingW(file_, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (!mapping_) fail("cannot map " + path);
+    data_ = static_cast<const uint8_t*>(MapViewOfFile(mapping_, FILE_MAP_READ, 0, 0, 0));
+    if (!data_) fail("cannot map " + path);
+#else
     fd_ = ::open(path.c_str(), O_RDONLY);
     if (fd_ < 0) throw std::runtime_error("cannot open " + path);
     struct stat st;
-    if (::fstat(fd_, &st) != 0) throw std::runtime_error("cannot stat " + path);
+    if (::fstat(fd_, &st) != 0) fail("cannot stat " + path);
     size_ = static_cast<size_t>(st.st_size);
+    if (size_ == 0) return;  // mmap rejects empty files; callers report it as truncated
     void* p = ::mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd_, 0);
-    if (p == MAP_FAILED) throw std::runtime_error("mmap failed for " + path);
+    if (p == MAP_FAILED) fail("mmap failed for " + path);
     data_ = static_cast<const uint8_t*>(p);
+#endif
   }
-  ~MappedFile() {
-    if (data_) ::munmap(const_cast<uint8_t*>(data_), size_);
-    if (fd_ >= 0) ::close(fd_);
-  }
+  ~MappedFile() { release(); }
+  MappedFile(const MappedFile&) = delete;
+  MappedFile& operator=(const MappedFile&) = delete;
+
   const uint8_t* data() const { return data_; }
   size_t size() const { return size_; }
 
  private:
+  // Releases whatever was acquired so far (the destructor doesn't run if the constructor throws).
+  [[noreturn]] void fail(const std::string& msg) {
+    release();
+    throw std::runtime_error(msg);
+  }
+  void release() {
+#ifdef _WIN32
+    if (data_) UnmapViewOfFile(data_);
+    if (mapping_) CloseHandle(mapping_);
+    if (file_ != INVALID_HANDLE_VALUE) CloseHandle(file_);
+    mapping_ = nullptr;
+    file_ = INVALID_HANDLE_VALUE;
+#else
+    if (data_) ::munmap(const_cast<uint8_t*>(data_), size_);
+    if (fd_ >= 0) ::close(fd_);
+    fd_ = -1;
+#endif
+    data_ = nullptr;
+  }
+
+#ifdef _WIN32
+  HANDLE file_ = INVALID_HANDLE_VALUE;
+  HANDLE mapping_ = nullptr;
+#else
   int fd_ = -1;
+#endif
   const uint8_t* data_ = nullptr;
   size_t size_ = 0;
 };
@@ -153,7 +221,14 @@ void ModelFiles::open_safetensors(const std::string& path) {
 }
 
 ModelFiles::ModelFiles(const std::string& dir) : dir_(dir) {
-  while (dir_.size() > 1 && dir_.back() == '/') dir_.pop_back();
+  auto is_sep = [](char ch) {
+#ifdef _WIN32
+    return ch == '/' || ch == '\\';
+#else
+    return ch == '/';
+#endif
+  };
+  while (dir_.size() > 1 && is_sep(dir_.back())) dir_.pop_back();
   load_config();
   const std::string single = dir_ + "/model.safetensors";
   const std::string index = dir_ + "/model.safetensors.index.json";
