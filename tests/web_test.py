@@ -19,7 +19,7 @@ import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, "build")
-CPU = os.path.join(BUILD, "twinfer-cpu")
+CPU = os.path.join(BUILD, "twinfer-cpu" + (".exe" if os.name == "nt" else ""))
 
 FIXED = [
     "Hello world", "  leading spaces", "trailing   ", "tabs\tand\nnewlines\n\n", "it's they're we'll I'M 'S",

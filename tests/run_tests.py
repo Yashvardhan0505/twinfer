@@ -3,6 +3,7 @@
 
   --cpu              C++ CPU engine vs the numpy reference; C++ tokenizer vs the JS tokenizer (Node)
   --cuda             CUDA engine vs the CPU engine (decode/graph, chunked prefill, int8, bias/untied)
+  --build-dir DIR    where the binaries are and the test models go (default: build/)
   --cuda-bin PATH    CUDA binary to test (default build/twinfer-cuda; the emulator passes its own)
   --quick            fewer tokens (for the slow CPU emulator)
 """
@@ -17,8 +18,9 @@ import sys
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EXE = ".exe" if os.name == "nt" else ""
 BUILD = os.path.join(ROOT, "build")
-CPU = os.path.join(BUILD, "twinfer-cpu")
+CPU = os.path.join(BUILD, "twinfer-cpu" + EXE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 FIXED = [
@@ -120,22 +122,26 @@ def test_cuda(r, tiny, qwen, binary, quick):
 
 
 def main():
+    global BUILD, CPU
     ap = argparse.ArgumentParser()
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--cuda", action="store_true")
-    ap.add_argument("--cuda-bin", default=os.path.join(BUILD, "twinfer-cuda"))
+    ap.add_argument("--build-dir", default=BUILD)
+    ap.add_argument("--cuda-bin")
     ap.add_argument("--quick", action="store_true")
     a = ap.parse_args()
     if not (a.cpu or a.cuda):
         a.cpu = True
+    BUILD = os.path.abspath(a.build_dir)
+    CPU = os.path.join(BUILD, "twinfer-cpu" + EXE)
     if not os.path.exists(CPU):
-        raise SystemExit("build the CPU engine first: make cpu")
+        raise SystemExit(f"build the CPU engine first (make cpu, or cmake --build): {CPU} not found")
     tiny, qwen = ensure_models()
     r = Report()
     if a.cpu:
         test_cpu(r, tiny, qwen)
     if a.cuda:
-        test_cuda(r, tiny, qwen, a.cuda_bin, a.quick)
+        test_cuda(r, tiny, qwen, a.cuda_bin or os.path.join(BUILD, "twinfer-cuda" + EXE), a.quick)
     if r.failed:
         raise SystemExit(f"{r.failed} test(s) FAILED")
     print("all tests passed")

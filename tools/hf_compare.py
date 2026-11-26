@@ -45,8 +45,9 @@ def main():
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    cpu = os.path.join(BUILD, "twinfer-cpu")
-    cuda = os.path.join(BUILD, "twinfer-cuda")
+    exe = ".exe" if os.name == "nt" else ""
+    cpu = os.path.join(BUILD, "twinfer-cpu" + exe)
+    cuda = os.path.join(BUILD, "twinfer-cuda" + exe)
     tok = AutoTokenizer.from_pretrained(a.model)
     failures = 0
 
