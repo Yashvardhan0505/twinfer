@@ -75,13 +75,20 @@ How close the real numbers get to that is the interesting part.
 
 ## Running it
 
-CUDA needs an NVIDIA GPU, sm_70 or newer (a free Colab T4 works):
+CUDA needs an NVIDIA GPU with compute capability 7.5 or newer on CUDA 13 (7.0 still works with
+CUDA 12.x). RTX 50-series GPUs (sm_120) need CUDA 12.8 or newer. A free Colab T4 works too.
+
+Download the model (on Windows, type `python` instead of `python3`):
 
 ```bash
-make cuda ARCH=native
 pip install huggingface_hub
 python3 -c "from huggingface_hub import snapshot_download as d; d('HuggingFaceTB/SmolLM2-135M-Instruct', local_dir='models/smollm2-135m', allow_patterns=['*.json','*.safetensors'])"
+```
 
+Linux:
+
+```bash
+make cuda ARCH=native                                       # or `make cpu` for the CPU engine only
 ./build/twinfer-cuda -m models/smollm2-135m -p "Explain warp divergence in one sentence."
 ./build/twinfer-cuda -m models/smollm2-135m -i              # chat
 ./build/twinfer-cuda -m models/smollm2-135m --bench 256     # try --int8 and --no-graph too
@@ -89,7 +96,23 @@ python3 -c "from huggingface_hub import snapshot_download as d; d('HuggingFaceTB
 python3 tools/roofline.py bench.csv -o docs/roofline.png
 ```
 
-CPU only: `make cpu`, then the same commands with `./build/twinfer-cpu`.
+Windows, in PowerShell, with Visual Studio 2022 or its Build Tools ("Desktop development with C++"),
+the CUDA Toolkit and CMake 3.24 or newer:
+
+```powershell
+cmake -B build                               # add -DCMAKE_CUDA_ARCHITECTURES=120 if it can't detect the GPU
+cmake --build build --config Release
+.\build\twinfer-cuda.exe -m models\smollm2-135m -p "Explain warp divergence in one sentence."
+.\build\twinfer-cuda.exe -m models\smollm2-135m --bench 256
+.\build\bench-kernels.exe --csv bench.csv
+```
+
+If `cmake` isn't found, it is only on PATH inside the Developer PowerShell for VS; `winget install
+Kitware.CMake` fixes that. If CMake reports "No CUDA toolset found", reinstall the CUDA Toolkit with
+its Visual Studio Integration component. CMake also works on Linux, and without CUDA (or with
+`-DTWINFER_CUDA=OFF`) it builds just `twinfer-cpu`.
+
+CPU only: the same commands with `twinfer-cpu`.
 
 Browser: open the demo link, or run `python3 -m http.server 8000` in the repo and go to
 http://localhost:8000/web/.
@@ -100,10 +123,10 @@ Useful flags: `--temp`, `--top-p`, `-n`, `--ctx`, `--system`, `--raw` (no chat t
 
 Most of the tests run without a GPU:
 
-- `make test`: CPU engine vs an independent numpy implementation, and the C++ tokenizer vs the JS one
-- `make test-emu`: runs the real CUDA kernels on the CPU through a small emulator (`tests/cuda_emu/`). It's slow, but it catches indexing and sync bugs, and CI runs it on every push.
+- `make test` (CMake: `ctest --test-dir build -C Release -LE gpu`): CPU engine vs an independent numpy implementation, and the C++ tokenizer vs the JS one. Needs `pip install numpy`; the tokenizer comparison also needs Node.
+- `make test-emu` (Linux): runs the real CUDA kernels on the CPU through a small emulator (`tests/cuda_emu/`). It's slow, but it catches indexing and sync bugs, and CI runs it on every push.
 - `python3 tests/web_test.py`: the WebGPU engine in headless Chrome (software adapter) vs the C++ engine
-- `make test-cuda`: kernel unit tests and end-to-end checks on an actual GPU
+- `make test-cuda` (CMake: `ctest --test-dir build -C Release -L gpu`): kernel unit tests and end-to-end checks on an actual GPU
 - `python3 tools/hf_compare.py models/smollm2-135m --cuda`: tokenizer, logits and greedy output against Hugging Face transformers
 
 The kernel tests fill padding and unused KV-cache rows with NaN on purpose, so an out-of-bounds

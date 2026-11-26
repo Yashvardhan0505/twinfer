@@ -87,6 +87,7 @@ endif()
 
 # Tests
 enable_testing()
+set(Python3_FIND_REGISTRY LAST)  # Windows: prefer the python on PATH (the one numpy got installed into)
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(NAME cpu COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/run_tests.py --cpu
