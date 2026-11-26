@@ -76,6 +76,14 @@ class Report:
 def test_cpu(r, tiny, qwen):
     import reference
 
+    unit = os.path.join(BUILD, "test-common" + EXE)
+    if os.path.exists(unit):
+        print("[C++ unit tests: generation loop, sampler, chat turns]")
+        res = subprocess.run([unit, tiny], capture_output=True, text=True)
+        print(res.stdout + res.stderr, end="", flush=True)
+        r.line("test-common", f"exit code {res.returncode}", res.returncode == 0)
+    else:
+        print(f"[C++ unit tests] {unit} not built, skipping")
     print("[cpu engine vs numpy reference]")
     for name, model in (("llama-style, bf16, tied", tiny), ("qwen-style, f32, bias, untied", qwen)):
         ref = reference.forward(model, TOKENS)

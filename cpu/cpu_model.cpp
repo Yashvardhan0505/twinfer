@@ -82,6 +82,7 @@ CpuModel::CpuModel(const ModelFiles& mf, int max_seq) : c_(mf.config()), max_seq
 }
 
 const float* CpuModel::forward(const int* tokens, int n, int pos0) {
+  if (n <= 0) throw std::runtime_error("forward() needs at least one token");
   const float* out = nullptr;
   for (int i = 0; i < n; ++i) out = step(tokens[i], pos0 + i);
   return out;

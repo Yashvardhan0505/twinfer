@@ -59,6 +59,7 @@ inline GenStats generate(Engine& eng, Sampler& sampler, const std::vector<int>& 
     if (sampler.greedy()) return eng.forward_argmax(toks, n, p);
     return sampler.sample(eng.forward(toks, n, p), vocab);
   };
+  if (prompt.empty()) throw std::runtime_error("empty prompt (nothing to feed the model)");
   if (pos + static_cast<int>(prompt.size()) >= eng.max_seq()) throw std::runtime_error("prompt exceeds context");
   double t0 = now_s();
   int next = pick(prompt.data(), static_cast<int>(prompt.size()), pos);

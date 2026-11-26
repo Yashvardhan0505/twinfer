@@ -321,6 +321,7 @@ export class Engine {
   // Run tokens at positions [pos0, pos0 + n). Returns the last token's logits (Float32Array),
   // or its argmax when `greedy` (only 4 bytes are read back).
   async forward(tokens, pos0, { greedy = false } = {}) {
+    if (!tokens.length) throw new Error("forward() needs at least one token");
     if (pos0 + tokens.length > this.maxSeq) throw new Error("context length exceeded");
     const q = this.device.queue;
     for (let i = 0; i < tokens.length; i++) {

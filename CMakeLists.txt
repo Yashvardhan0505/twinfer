@@ -42,19 +42,22 @@ endif()
 
 set(COMMON_SRC common/model_files.cpp common/tokenizer.cpp common/platform.cpp)
 
-# CPU reference engine
+# CPU reference engine, and the unit tests that run on it
 add_executable(twinfer-cpu cpu/main.cpp cpu/cpu_model.cpp ${COMMON_SRC})
+add_executable(test-common tests/test_common.cpp cpu/cpu_model.cpp ${COMMON_SRC})
 find_package(OpenMP)
-if(OpenMP_CXX_FOUND)
-  target_link_libraries(twinfer-cpu PRIVATE OpenMP::OpenMP_CXX)
-endif()
 if(TWINFER_NATIVE AND NOT MSVC)
   include(CheckCXXCompilerFlag)
   check_cxx_compiler_flag(-march=native TWINFER_HAS_MARCH_NATIVE)
-  if(TWINFER_HAS_MARCH_NATIVE)
-    target_compile_options(twinfer-cpu PRIVATE -march=native)
-  endif()
 endif()
+foreach(t twinfer-cpu test-common)
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(${t} PRIVATE OpenMP::OpenMP_CXX)
+  endif()
+  if(TWINFER_HAS_MARCH_NATIVE)
+    target_compile_options(${t} PRIVATE -march=native)
+  endif()
+endforeach()
 
 # CUDA engine, kernel tests, kernel benchmarks
 if(TWINFER_CUDA)
