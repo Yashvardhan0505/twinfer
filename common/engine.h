@@ -34,11 +34,13 @@ class Engine {
 struct GenStats {
   int prompt_tokens = 0;
   double prefill_s = 0.0;
-  int gen_tokens = 0;
+  int gen_tokens = 0;    // tokens produced (the first one comes out of the prefill)
+  int decode_steps = 0;  // single-token forward passes, i.e. what decode_s actually timed
   double decode_s = 0.0;
   bool hit_stop = false;
   double prefill_tps() const { return prefill_s > 0 ? prompt_tokens / prefill_s : 0.0; }
-  double decode_tps() const { return decode_s > 0 ? gen_tokens / decode_s : 0.0; }
+  double decode_tps() const { return decode_s > 0 ? decode_steps / decode_s : 0.0; }
+  double ms_per_token() const { return decode_steps > 0 ? decode_s * 1e3 / decode_steps : 0.0; }
 };
 
 inline double now_s() {
@@ -78,6 +80,7 @@ inline GenStats generate(Engine& eng, Sampler& sampler, const std::vector<int>& 
     if (i + 1 == max_new || pos + 1 >= eng.max_seq()) break;  // `next` was shown but not fed
     next = pick(&next, 1, pos);
     pos += 1;
+    st.decode_steps++;
   }
   st.decode_s = now_s() - t0;
   if (pending) *pending = next;

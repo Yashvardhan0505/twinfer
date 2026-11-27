@@ -32,8 +32,7 @@ FIXED = [
 ]
 POOL = list("abcXYZ019 \t\n\r.,;:'!?-_()[]{}\"") + ["é", "ß", "न", "ि", "ं", "你", "。", "😀", " ", " ",
                                                      "½", "²", "٣", "́", "—", "’", "　", "Ω"]
-TOKENS = [342, 531, 500, 492, 543, 454, 35, 52, 53, 535, 554, 118, 49]
-VOCAB = 559
+TOKENS = [342, 531, 500, 492, 543, 454, 35, 52, 53, 535, 554, 118, 49]  # all < the tiny models' vocab (559)
 
 
 def run(cmd, **kw):
@@ -56,7 +55,9 @@ def dump(binary, model, tokens, chunk, extra=(), env=None):
     out = os.path.join(BUILD, "test_logits.bin")
     run([binary, "-m", model, "--tokens", ",".join(map(str, tokens)), "--dump-logits", out, "--prefill-chunk",
          str(chunk), *extra], stderr=subprocess.DEVNULL, env=env)
-    return np.fromfile(out, np.float32).reshape(-1, VOCAB)
+    with open(os.path.join(model, "config.json")) as f:
+        vocab = json.load(f)["vocab_size"]
+    return np.fromfile(out, np.float32).reshape(-1, vocab)
 
 
 class Report:

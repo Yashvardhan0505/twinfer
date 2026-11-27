@@ -50,6 +50,15 @@ int main(int argc, char** argv) {
     check(throws([&] { tf::generate(eng, greedy, {}, pos, 4, {}, [](int) {}); }),
           "empty prompt is an error, not a crash");
     check(throws([&] { eng.forward(nullptr, 0, 0); }), "CpuModel::forward with no tokens is an error");
+    const std::vector<int> prompt = tok.encode("The quick brown fox");
+    pos = 0;
+    tf::GenStats st = tf::generate(eng, greedy, prompt, pos, 5, {}, [](int) {});
+    check(st.gen_tokens == 5 && st.decode_steps == 4, "5 tokens cut off by -n took 4 decode steps (tok/s counts those)");
+    const int first = tf::Sampler::argmax(eng.forward(prompt.data(), static_cast<int>(prompt.size()), 0),
+                                          mf.config().vocab_size);
+    pos = 0;
+    st = tf::generate(eng, greedy, prompt, pos, 5, {first}, [](int) {});
+    check(st.hit_stop && st.gen_tokens == 0 && st.decode_steps == 0, "stop token straight away: 0 tokens, 0 steps");
   }
 
   std::printf("[sampler]\n");

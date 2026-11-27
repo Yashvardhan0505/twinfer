@@ -78,6 +78,7 @@ def main():
     if ours != theirs:
         print("  HF  :", repr(theirs))
         print("  ours:", repr(ours))
+        failures += 1
 
     # 3. logits
     model = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.float32)

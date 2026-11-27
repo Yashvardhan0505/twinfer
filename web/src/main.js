@@ -176,7 +176,7 @@ async function send() {
     const tPrefill = performance.now() - t0;
 
     const decoder = new TextDecoder();
-    let generated = 0, cut = false;
+    let generated = 0, steps = 0, cut = false; // steps = single-token forward passes timed below
     const t1 = performance.now();
     while (generated < maxNew && !state.stop && !state.stopIds.includes(next)) {
       out.textContent += decoder.decode(shownBytes(tok, next), { stream: true });
@@ -185,16 +185,17 @@ async function send() {
       if (generated === maxNew || state.pos + 1 >= eng.maxSeq) { cut = true; break; }
       next = await step([next], state.pos);
       state.pos++;
+      steps++;
     }
     if (cut) state.carry = next; // shown but not fed yet: it goes in front of the next turn
     out.textContent += decoder.decode();
     const tDecode = performance.now() - t1;
-    const msPerTok = generated > 1 ? tDecode / (generated - 1) : 0;
+    const msPerTok = steps ? tDecode / steps : 0;
     const gbps = msPerTok ? eng.weightBytes / (msPerTok / 1000) / 1e9 : 0;
     const bw = gbps >= 1 ? `${gbps.toFixed(1)} GB/s` : `${(gbps * 1000).toFixed(0)} MB/s`;
     ui.stats.innerHTML =
       `prefill <b>${ids.length}</b> tokens in ${tPrefill.toFixed(0)} ms | ` +
-      `decode <b>${(generated > 1 ? (1000 / msPerTok) : 0).toFixed(1)}</b> tok/s (${msPerTok.toFixed(1)} ms/token) | ` +
+      `decode <b>${(msPerTok ? 1000 / msPerTok : 0).toFixed(1)}</b> tok/s (${msPerTok.toFixed(1)} ms/token) | ` +
       `weights read at <b>${bw}</b> | context ${state.pos}/${eng.maxSeq}`;
     state.firstTurn = false;
   } catch (e) {

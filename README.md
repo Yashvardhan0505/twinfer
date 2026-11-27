@@ -59,7 +59,7 @@ TODO: fill these in from a real GPU run. `notebooks/colab_quickstart.ipynb` prin
 
 SmolLM2-135M-Instruct, batch size 1, GPU: ?
 
-| backend | prefill tok/s | decode tok/s | ms/token |
+| backend | prefill tok/s (512-token prompt) | decode tok/s | ms/token |
 |---|---|---|---|
 | CUDA fp16 + graph | | | |
 | CUDA fp16, no graph | | | |
@@ -91,7 +91,8 @@ Linux:
 make cuda ARCH=native                                       # or `make cpu` for the CPU engine only
 ./build/twinfer-cuda -m models/smollm2-135m -p "Explain warp divergence in one sentence."
 ./build/twinfer-cuda -m models/smollm2-135m -i              # chat
-./build/twinfer-cuda -m models/smollm2-135m --bench 256     # try --int8 and --no-graph too
+./build/twinfer-cuda -m models/smollm2-135m --bench 256     # decode speed; try --int8 and --no-graph too
+./build/twinfer-cuda -m models/smollm2-135m --bench 1 --bench-prompt 512   # prefill speed
 ./build/bench-kernels --csv bench.csv                       # kernels vs cuBLAS
 python3 tools/roofline.py bench.csv -o docs/roofline.png
 ```

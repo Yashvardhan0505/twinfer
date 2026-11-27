@@ -39,6 +39,7 @@ struct Options {
   bool int8 = false;
   bool cuda_graph = true;
   int bench_tokens = 0;      // --bench N: decode N tokens greedily and report throughput
+  int bench_prompt = 0;      // --bench-prompt N: prompt length for --bench (0 = the prompt as is)
 };
 
 inline void print_usage(const char* prog, bool cuda) {
@@ -56,6 +57,8 @@ inline void print_usage(const char* prog, bool cuda) {
                "  --raw                 plain completion, no chat template\n"
                "  --quiet               print only the generated text\n"
                "  --bench N             greedy-decode N tokens and report tokens/s\n"
+               "  --bench-prompt N      prompt length for --bench, made by repeating the prompt's tokens\n"
+               "                        (prefill speed needs a few hundred tokens to mean anything)\n"
                "testing:\n"
                "  --tokens 1,2,3        feed these token ids instead of a prompt\n"
                "  --dump-logits FILE    write float32 logits per chunk and exit\n"
@@ -107,6 +110,7 @@ inline Options parse_options(const std::vector<std::string>& args, bool cuda) {
     else if (a == "--prefill-chunk") o.prefill_chunk = std::max(1, std::atoi(need(i).c_str()));
     else if (a == "--tokenize") { o.tokenize = need(i); o.tokenize_mode = true; }
     else if (a == "--bench") o.bench_tokens = std::atoi(need(i).c_str());
+    else if (a == "--bench-prompt") o.bench_prompt = std::atoi(need(i).c_str());
     else if (cuda && a == "--int8") o.int8 = true;
     else if (cuda && a == "--no-graph") o.cuda_graph = false;
     else if (a == "-h" || a == "--help") { print_usage(prog, cuda); std::exit(0); }
@@ -191,14 +195,18 @@ inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_e
       g.temperature = 0.0f;
       Sampler greedy(g);
       std::vector<int> ids = o.tokens.empty() ? build_prompt(o.prompt) : o.tokens;
+      if (o.bench_prompt > 0 && !ids.empty()) {  // repeat the prompt's tokens up to the requested length
+        const std::vector<int> base = ids;
+        while (static_cast<int>(ids.size()) < o.bench_prompt) ids.insert(ids.end(), base.begin(), base.end());
+        ids.resize(static_cast<size_t>(o.bench_prompt));
+      }
       int pos = 0;
       // Warm-up run (builds CUDA graphs, warms caches), then the measured run.
       generate(*eng, greedy, ids, pos, 8, {}, [](int) {});
       pos = 0;
       GenStats st = generate(*eng, greedy, ids, pos, o.bench_tokens, {}, [](int) {});
       std::printf("prompt_tokens=%d prefill_tok_s=%.1f decode_tokens=%d decode_tok_s=%.1f ms_per_token=%.3f backend=%s\n",
-                  st.prompt_tokens, st.prefill_tps(), st.gen_tokens, st.decode_tps(),
-                  st.gen_tokens ? st.decode_s * 1e3 / st.gen_tokens : 0.0, eng->name());
+                  st.prompt_tokens, st.prefill_tps(), st.gen_tokens, st.decode_tps(), st.ms_per_token(), eng->name());
       return 0;
     }
 
