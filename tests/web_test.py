@@ -59,9 +59,10 @@ def cpp_chat(model):
 def ui_chat(page, port, model_url):
     """The same conversation typed into the real chat page (web/index.html)."""
     page.goto(f"http://127.0.0.1:{port}/web/index.html?base={model_url}")
-    page.click("#load-btn")
     idle = "!document.querySelector('#send-btn').disabled && !document.querySelector('.msg.streaming')"
-    page.wait_for_function(idle, timeout=600_000)
+    for _ in range(2):  # the second load replaces the first engine (and has to free it)
+        page.click("#load-btn")
+        page.wait_for_function(idle, timeout=600_000)
     page.fill("#temp", "0")
     page.fill("#max-new", str(CHAT_MAX_NEW))
     replies = []
@@ -159,6 +160,10 @@ def main():
         cpp_out = cpp_out[:-1] if cpp_out.endswith(b"\n") else cpp_out
         good = bytes(r["gen_bytes"]) == cpp_out
         print(f"[{name}] greedy generation: js={r['gen_text']!r} identical bytes to C++: {good}  {'ok' if good else 'FAIL'}")
+        ok &= good
+        good = r["destroy_error"] is None and r["forward_after_destroy_fails"]
+        print(f"[{name}] Engine.destroy() frees the GPU buffers (error: {r['destroy_error']}, engine unusable after: "
+              f"{r['forward_after_destroy_fails']})  {'ok' if good else 'FAIL'}")
         ok &= good
     want = cpp_chat(qwen)
     good = js_chat == want

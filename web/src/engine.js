@@ -78,7 +78,12 @@ export class Engine {
     );
     const c = parseConfig(config);
     const e = new Engine(device, c, weights, Math.min(maxSeq, c.maxPos), sources);
-    await e.init(onProgress);
+    try {
+      await e.init(onProgress);
+    } catch (err) {
+      e.destroy(); // don't leave half the weights on the GPU
+      throw err;
+    }
     return e;
   }
 
@@ -89,7 +94,18 @@ export class Engine {
     this.maxSeq = maxSeq;
     this.sources = sources;
     this.pipelines = new Map();
+    this.buffers = []; // every GPU buffer this engine created, for destroy()
     this.weightBytes = 0;
+  }
+
+  // Frees the weights, KV cache and activations now. Dropping the last reference would only free
+  // them whenever the garbage collector runs, which the GPU's memory pressure doesn't trigger, so
+  // loading a second model could run out of memory with the first one still allocated.
+  destroy() {
+    for (const b of this.buffers) b.destroy(); // destroying twice is allowed (staging buffers)
+    this.buffers = [];
+    this.layers = [];
+    this.pipelines.clear();
   }
 
   async module(name) {
@@ -110,7 +126,9 @@ export class Engine {
   }
 
   buffer(size, usage, label) {
-    return this.device.createBuffer({ size: align(Math.max(size, 16), 16), usage, label });
+    const b = this.device.createBuffer({ size: align(Math.max(size, 16), 16), usage, label });
+    this.buffers.push(b);
+    return b;
   }
 
   f32Buffer(arr, label) {

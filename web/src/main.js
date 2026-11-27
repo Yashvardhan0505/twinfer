@@ -101,6 +101,7 @@ async function loadFromFiles(fileList) {
 
 async function load(getFiles, label) {
   setBusy(true);
+  if (state.engine) state.engine.destroy(); // free the previous model's GPU memory first
   state.engine = null;
   try {
     if (!state.gpu) state.gpu = await initDevice();

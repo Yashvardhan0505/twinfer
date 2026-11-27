@@ -14,6 +14,7 @@ const qs = new URLSearchParams(location.search);
 const out = {};
 try {
   const input = await fetchJson(qs.get("input"));
+  let gpu = null; // one device for every model, like the chat page
   for (const m of input.models) {
     const r = (out[m.name] = {});
     const tok = new Tokenizer(await fetchJson(m.path + "tokenizer.json"));
@@ -22,7 +23,8 @@ try {
     if (!m.engine) continue;
     const config = await fetchJson(m.path + "config.json");
     const weights = parseSafetensors(await fetchBytes(m.path + "model.safetensors"));
-    const { device, info } = await initDevice();
+    if (!gpu) gpu = await initDevice();
+    const { device, info } = gpu;
     out.adapter = `${info.vendor || "?"} / ${info.architecture || "?"}`;
     const eng = await Engine.create({ device, config, weights, maxSeq: 256 });
     r.logits = [];
@@ -40,6 +42,14 @@ try {
     }
     r.gen_text = tok.decode(gen);
     r.gen_bytes = Array.from(gen.flatMap((id) => Array.from(tok.tokenBytes(id))));
+    // destroy() really frees the buffers: it raises no error, and the engine can't run afterwards.
+    // The next model then loads on the same device.
+    device.pushErrorScope("validation");
+    eng.destroy();
+    r.destroy_error = (await device.popErrorScope())?.message ?? null;
+    device.pushErrorScope("validation");
+    r.forward_after_destroy_fails = await eng.forward([input.tokens[0]], 0).then(() => false, () => true);
+    await device.popErrorScope();
   }
 } catch (e) {
   out.error = String((e && e.stack) || e);
