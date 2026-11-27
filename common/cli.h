@@ -44,7 +44,7 @@ inline void print_usage(const char* prog, bool cuda) {
   std::fprintf(stderr,
                "usage: %s -m MODEL_DIR [options]\n"
                "  -p, --prompt TEXT     prompt (wrapped in the chat template unless --raw)\n"
-               "  -i, --interactive     multi-turn chat\n"
+               "  -i, --interactive     multi-turn chat (with --raw: keeps continuing your text)\n"
                "  -n, --max-new N       max new tokens (default 256)\n"
                "  --temp T              temperature, 0 = greedy (default 0.6)\n"
                "  --top-p P             nucleus sampling threshold (default 0.9)\n"
@@ -208,10 +208,12 @@ inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_e
       return 0;
     }
 
-    // interactive chat (KV cache is kept across turns)
-    ChatSession session(*eng, tok, o.system);
+    // interactive chat (KV cache is kept across turns); plain text continuation with --raw
+    ChatSession session(*eng, tok, o.system, chat);
     std::string line;
-    std::fprintf(stderr, "chat mode: type a message, empty line or Ctrl-D to quit\n");
+    std::fprintf(stderr, chat ? "chat mode: type a message, empty line or Ctrl-D to quit\n"
+                              : "text mode (--raw): each line is appended to the text and continued; "
+                                "empty line or Ctrl-D to quit\n");
     while (true) {
       std::fprintf(stderr, "\n> ");
       if (!std::getline(std::cin, line) || line.empty()) break;

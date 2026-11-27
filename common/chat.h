@@ -1,5 +1,7 @@
 // Multi-turn chat on top of generate(). The KV cache is kept between turns, so each turn only
 // feeds the new text (plus the last token of the previous reply if that reply was cut off).
+// With chatml = false (--raw, or a model without ChatML tokens) there is no template: every line
+// is appended to the text so far and the model continues it.
 #pragma once
 #include <functional>
 #include <string>
@@ -12,8 +14,8 @@ namespace tf {
 
 class ChatSession {
  public:
-  ChatSession(Engine& eng, const Tokenizer& tok, std::string system)
-      : eng_(eng), tok_(tok), system_(std::move(system)) {}
+  ChatSession(Engine& eng, const Tokenizer& tok, std::string system, bool chatml = true)
+      : eng_(eng), tok_(tok), system_(std::move(system)), chatml_(chatml) {}
 
   // One user turn: feeds the new text and generates up to max_new tokens. If the conversation
   // would not fit in the context it starts over (on_reset is called first).
@@ -42,6 +44,7 @@ class ChatSession {
 
   // The text of a turn, as tokens.
   std::vector<int> turn_ids(const std::string& user, bool first) const {
+    if (!chatml_) return tok_.encode(first ? user : "\n" + user);
     if (first) return tok_.encode(chatml_prompt({{"user", user}}, system_));
     return tok_.encode("<|im_end|>\n<|im_start|>user\n" + user + "<|im_end|>\n<|im_start|>assistant\n");
   }
@@ -50,6 +53,7 @@ class ChatSession {
   Engine& eng_;
   const Tokenizer& tok_;
   std::string system_;
+  bool chatml_;
   int pos_ = 0;
   bool first_ = true;
   int carry_ = -1;

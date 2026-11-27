@@ -120,6 +120,24 @@ int main(int argc, char** argv) {
     check(got == want, "chat KV cache == fresh forward over the transcript (bit-identical)");
   }
 
+  std::printf("[chat, --raw]\n");
+  {
+    tf::CpuModel raw_eng(mf, 128);
+    tf::ChatSession raw(raw_eng, tok, "be brief", /*chatml=*/false);
+    check(raw.turn_ids("hello there", true) == tok.encode("hello there"), "first line is fed as plain text");
+    check(raw.turn_ids("and then?", false) == tok.encode("\nand then?"), "later lines are appended on a new line");
+    std::vector<int> fed = raw.turn_ids("hello there", true), more = raw.turn_ids("and then?", false);
+    fed.insert(fed.end(), more.begin(), more.end());
+    const int im_start = tok.token_id("<|im_start|>");
+    bool no_template = true;
+    for (int t : fed) no_template &= t != im_start;
+    check(no_template, "no ChatML tokens in raw mode");
+    std::vector<int> r;
+    raw.turn(greedy, "hello there", 3, {}, [&](int t) { r.push_back(t); });
+    check(raw.pos() == static_cast<int>(tok.encode("hello there").size()) + 2 && raw.carry() == r.back(),
+          "raw turns carry a cut-off token like chat turns");
+  }
+
   if (g_failures) {
     std::printf("%d test(s) FAILED\n", g_failures);
     return 1;
