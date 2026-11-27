@@ -76,7 +76,7 @@ or run `python3 tools/bench_table.py models/smollm2-135m`. Every run and the ful
 The output matches Hugging Face on the same model: fp16 logits are within 2.3e-3 of transformers' fp32 with the
 same top token at every position, and the greedy text is identical (`tools/hf_compare.py`).
 
-![Roofline of twinfer's kernels on a Tesla T4](docs/roofline.png)
+![Roofline of twinfer's kernels on a Tesla T4](docs/roofline-t4.png)
 
 What the numbers say:
 
