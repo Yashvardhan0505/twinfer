@@ -138,6 +138,31 @@ int main(int argc, char** argv) {
           "raw turns carry a cut-off token like chat turns");
   }
 
+  std::printf("[tokenizer normalizers]\n");
+  {
+    // Copies of the test tokenizer.json with a different "normalizer" entry.
+    const std::string dir = argv[1], base = tf::read_text_file(dir + "/tokenizer.json");
+    auto variant = [&](const std::string& normalizer, const std::string& name) {
+      std::string s = base;
+      const std::string key = "\"normalizer\": null";
+      const size_t at = s.find(key);
+      if (at == std::string::npos) return std::string("(no normalizer key in the test tokenizer)");
+      s.replace(at, key.size(), "\"normalizer\": " + normalizer);
+      const std::string path = dir + "/tokenizer_" + name + ".json";
+      FILE* f = std::fopen(path.c_str(), "wb");
+      if (f) {
+        std::fwrite(s.data(), 1, s.size(), f);
+        std::fclose(f);
+      }
+      return path;
+    };
+    check(!throws([&] { tf::Tokenizer t(variant("{\"type\": \"NFC\"}", "nfc")); }), "NFC normalizer loads (with a warning)");
+    check(!throws([&] { tf::Tokenizer t(variant("{\"type\": \"Sequence\", \"normalizers\": []}", "seq")); }),
+          "empty normalizer sequence loads");
+    check(throws([&] { tf::Tokenizer t(variant("{\"type\": \"Lowercase\"}", "lower")); }),
+          "unsupported normalizer is an error, not silently ignored");
+  }
+
   if (g_failures) {
     std::printf("%d test(s) FAILED\n", g_failures);
     return 1;

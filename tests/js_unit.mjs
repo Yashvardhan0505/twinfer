@@ -61,6 +61,15 @@ if (tokPath) {
   check(t4.reset && same(t4.ids, firstIds), "context full: starts over without the carried token");
   const imStart = tok.tokenId("<|im_start|>"), word = tok.encode("hi")[0];
   check(shownBytes(tok, imStart).length === 0 && shownBytes(tok, word).length > 0, "special tokens aren't shown");
+
+  console.log("[tokenizer.js normalizers]");
+  const json = JSON.parse(readFileSync(tokPath, "utf8"));
+  const nfc = new Tokenizer({ ...json, normalizer: { type: "NFC" } });
+  const decomposed = "café", composed = "café";
+  check(!same(tok.encode(decomposed), tok.encode(composed)), "without a normalizer, e + U+0301 and é differ");
+  check(same(nfc.encode(decomposed), nfc.encode(composed)), "NFC normalizer: e + U+0301 tokenizes like é");
+  check(same(nfc.encode("<|im_start|>x"), tok.encode("<|im_start|>x")), "special tokens are still matched as typed");
+  check(throws(() => new Tokenizer({ ...json, normalizer: { type: "Lowercase" } })), "unsupported normalizer is an error");
 } else {
   console.log("  no tokenizer.json given, skipping");
 }

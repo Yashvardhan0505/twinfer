@@ -48,6 +48,16 @@ export class Tokenizer {
     else visit(pre);
     if (!this.regex) throw new Error("expected a ByteLevel or Split pre-tokenizer");
     this.re = new RegExp(this.regex, "gu");
+    // Normalizer: NFC (Qwen2.5) is built into JS strings; anything else would silently give
+    // different tokens from Hugging Face, so it's an error.
+    this.nfc = false;
+    const checkNorm = (n) => {
+      if (!n) return;
+      if (n.type === "Sequence") n.normalizers.forEach(checkNorm);
+      else if (n.type === "NFC") this.nfc = true;
+      else throw new Error(`unsupported tokenizer normalizer: ${n.type}`);
+    };
+    checkNorm(json.normalizer);
 
     const b2u = bytesToUnicode();
     const u2b = new Map(b2u.map((c, b) => [c, b]));
@@ -157,7 +167,11 @@ export class Tokenizer {
         if (at < 0 || f < at || (f === at && c.length > len)) { at = f; len = c.length; id = cid; }
       }
       const end = at < 0 ? text.length : at;
-      if (end > pos) for (const p of this.pretokenize(text.slice(pos, end))) this.bpe(p, ids);
+      if (end > pos) {
+        // Like HF, the normalizer runs on the text between added tokens, which are matched as typed.
+        const seg = this.nfc ? text.slice(pos, end).normalize("NFC") : text.slice(pos, end);
+        for (const p of this.pretokenize(seg)) this.bpe(p, ids);
+      }
       if (at < 0) break;
       ids.push(id);
       pos = at + len;
