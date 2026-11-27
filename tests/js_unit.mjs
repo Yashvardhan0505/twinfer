@@ -1,9 +1,11 @@
 // Unit tests for the browser-side helpers that don't need a GPU. Run by tests/run_tests.py --cpu:
 //   node tests/js_unit.mjs build/tiny/tokenizer.json
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 
-import { turnIds } from "../web/src/chat.js";
+import { shownBytes, turnIds } from "../web/src/chat.js";
 import { Sampler } from "../web/src/sampler.js";
+import { loadModelFromUrl } from "../web/src/safetensors.js";
 import { Tokenizer, chatml } from "../web/src/tokenizer.js";
 
 let failures = 0;
@@ -57,8 +59,37 @@ if (tokPath) {
   check(same(t3.ids, later), "reply that ended on a stop token: nothing carried");
   const t4 = turnIds(tok, { pos: 505, firstTurn: false, carry: 42 }, "hi", opts);
   check(t4.reset && same(t4.ids, firstIds), "context full: starts over without the carried token");
+  const imStart = tok.tokenId("<|im_start|>"), word = tok.encode("hi")[0];
+  check(shownBytes(tok, imStart).length === 0 && shownBytes(tok, word).length > 0, "special tokens aren't shown");
 } else {
   console.log("  no tokenizer.json given, skipping");
+}
+
+console.log("[safetensors.js: loadModelFromUrl]");
+{
+  // a: model.safetensors fails with a 500. b: it's missing (404), the weights are sharded.
+  const header = new TextEncoder().encode(JSON.stringify({ t: { dtype: "F32", shape: [1], data_offsets: [0, 4] } }));
+  const shard = new Uint8Array(8 + header.length + 4);
+  new DataView(shard.buffer).setUint32(0, header.length, true);
+  shard.set(header, 8);
+  const files = {
+    "/a/config.json": "{}", "/a/tokenizer.json": "{}",
+    "/b/config.json": "{}", "/b/tokenizer.json": "{}",
+    "/b/model.safetensors.index.json": JSON.stringify({ weight_map: { t: "model-00001-of-00001.safetensors" } }),
+    "/b/model-00001-of-00001.safetensors": shard,
+  };
+  const server = createServer((req, res) => {
+    if (req.url === "/a/model.safetensors") return res.writeHead(500).end();
+    if (!(req.url in files)) return res.writeHead(404).end();
+    res.writeHead(200).end(files[req.url]);
+  });
+  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const err = await loadModelFromUrl(`${base}/a/`).then(() => null, (e) => e);
+  check(err !== null && err.status === 500, "a server error is reported as is, not as a missing shard index");
+  const b = await loadModelFromUrl(`${base}/b/`).catch(() => null);
+  check(b !== null && b.weights.tensors.has("t"), "a missing model.safetensors falls back to the shards");
+  server.close();
 }
 
 console.log(failures ? `${failures} test(s) FAILED` : "all tests passed");

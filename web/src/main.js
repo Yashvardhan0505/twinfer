@@ -1,9 +1,9 @@
 // Chat UI for the WebGPU engine.
 //   ?model=org/name   load any Hugging Face repo with a supported Llama-architecture model
 //   ?base=./models/x/ load config.json / tokenizer.json / model.safetensors from a URL prefix
-import { turnIds } from "./chat.js";
+import { shownBytes, turnIds } from "./chat.js";
 import { Engine, initDevice } from "./engine.js";
-import { fetchBytes, fetchJson, mergeShards, parseSafetensors } from "./safetensors.js";
+import { loadModelFromUrl, mergeShards, parseSafetensors } from "./safetensors.js";
 import { Sampler } from "./sampler.js";
 import { SMOLLM_SYSTEM, Tokenizer } from "./tokenizer.js";
 
@@ -66,22 +66,9 @@ function setBusy(busy) {
 
 // Loading
 
-async function loadFromUrlBase(base) {
-  const config = await fetchJson(base + "config.json");
-  const tokenizer = await fetchJson(base + "tokenizer.json");
-  const progress = (label) => (got, total, cached) =>
-    setProgress(total ? got / total : 0, `${label}${cached ? " (cache)" : ""}: ${mb(got)} / ${total ? mb(total) : "?"} MB`);
-  let weights;
-  try {
-    weights = parseSafetensors(await fetchBytes(base + "model.safetensors", progress("model.safetensors")));
-  } catch (e) {
-    const index = await fetchJson(base + "model.safetensors.index.json"); // sharded checkpoint
-    const files = [...new Set(Object.values(index.weight_map))];
-    const shards = [];
-    for (const f of files) shards.push(parseSafetensors(await fetchBytes(base + f, progress(f))));
-    weights = mergeShards(shards);
-  }
-  return { config, tokenizer, weights };
+function loadFromUrlBase(base) {
+  return loadModelFromUrl(base, (label, got, total, cached) =>
+    setProgress(total ? got / total : 0, `${label}${cached ? " (cache)" : ""}: ${mb(got)} / ${total ? mb(total) : "?"} MB`));
 }
 
 async function loadFromFiles(fileList) {
@@ -187,7 +174,7 @@ async function send() {
     let generated = 0, cut = false;
     const t1 = performance.now();
     while (generated < maxNew && !state.stop && !state.stopIds.includes(next)) {
-      out.textContent += decoder.decode(tok.tokenBytes(next), { stream: true });
+      out.textContent += decoder.decode(shownBytes(tok, next), { stream: true });
       ui.chat.scrollTop = ui.chat.scrollHeight;
       generated++;
       if (generated === maxNew || state.pos + 1 >= eng.maxSeq) { cut = true; break; }

@@ -14,3 +14,9 @@ export function turnIds(tok, chat, text, { maxNew, maxSeq, system }) {
   if (chat.pos + ids.length + maxNew >= maxSeq) return { ids: first(), reset: true };
   return { ids, reset: false };
 }
+
+// What the chat shows for a generated token. Special tokens (<|im_start|> and the like) are
+// control tokens, not text, so they are hidden, as the C++ CLI does.
+export function shownBytes(tok, id) {
+  return tok.isSpecial(id) ? new Uint8Array(0) : tok.tokenBytes(id);
+}
