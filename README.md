@@ -56,7 +56,8 @@ The reasoning behind each kernel is in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Numbers
 
-TODO: fill these in from a real GPU run. `notebooks/colab_quickstart.ipynb` prints the tables.
+TODO: fill these in from a real GPU run. `python3 tools/bench_table.py models/smollm2-135m` prints this
+table (median of 3 runs) with the line above it; `notebooks/colab_quickstart.ipynb` runs it on Colab.
 
 SmolLM2-135M-Instruct, batch size 1, GPU: ?
 
@@ -94,6 +95,7 @@ make cuda ARCH=native                                       # or `make cpu` for 
 ./build/twinfer-cuda -m models/smollm2-135m -i              # chat
 ./build/twinfer-cuda -m models/smollm2-135m --bench 256     # decode speed; try --int8 and --no-graph too
 ./build/twinfer-cuda -m models/smollm2-135m --bench 1 --bench-prompt 512   # prefill speed
+python3 tools/bench_table.py models/smollm2-135m            # all of the above: the table in Numbers
 ./build/bench-kernels --csv bench.csv                       # kernels vs cuBLAS
 python3 tools/roofline.py bench.csv -o docs/roofline.png
 ```
@@ -106,6 +108,7 @@ cmake -B build                               # add -DCMAKE_CUDA_ARCHITECTURES=12
 cmake --build build --config Release
 .\build\twinfer-cuda.exe -m models\smollm2-135m -p "Explain warp divergence in one sentence."
 .\build\twinfer-cuda.exe -m models\smollm2-135m --bench 256
+python tools\bench_table.py models\smollm2-135m
 .\build\bench-kernels.exe --csv bench.csv
 ```
 
@@ -144,7 +147,7 @@ cuda/kernels/    the CUDA kernels
 cuda/            engine, CLI, kernel tests, benchmarks
 web/             WebGPU demo (src/engine.js, src/shaders/*.wgsl)
 tests/           test scripts and the CUDA emulator
-tools/           tiny test model generator, numpy reference, HF comparison, roofline plot
+tools/           tiny test model generator, numpy reference, HF comparison, benchmark table, roofline plot
 docs/DESIGN.md   design notes
 ```
 
