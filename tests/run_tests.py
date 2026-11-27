@@ -36,7 +36,13 @@ TOKENS = [342, 531, 500, 492, 543, 454, 35, 52, 53, 535, 554, 118, 49]  # all < 
 
 
 def run(cmd, **kw):
-    return subprocess.run(cmd, check=True, **kw)
+    try:
+        return subprocess.run(cmd, check=True, **kw)
+    except subprocess.CalledProcessError as e:
+        if e.stderr:  # it was captured, so it isn't in the log: show why the command failed, not just its exit code
+            sys.stderr.write(e.stderr if isinstance(e.stderr, str) else e.stderr.decode("utf-8", "replace"))
+            sys.stderr.flush()
+        raise
 
 
 def ensure_models():
@@ -54,7 +60,7 @@ def ensure_models():
 def dump(binary, model, tokens, chunk, extra=(), env=None):
     out = os.path.join(BUILD, "test_logits.bin")
     run([binary, "-m", model, "--tokens", ",".join(map(str, tokens)), "--dump-logits", out, "--prefill-chunk",
-         str(chunk), *extra], stderr=subprocess.DEVNULL, env=env)
+         str(chunk), *extra], stderr=subprocess.PIPE, env=env)  # shown only if it fails
     with open(os.path.join(model, "config.json")) as f:
         vocab = json.load(f)["vocab_size"]
     return np.fromfile(out, np.float32).reshape(-1, vocab)
@@ -110,7 +116,8 @@ def test_cpu(r, tiny, qwen):
                              path], capture_output=True).stdout)
         bad = 0
         for s, ids in zip(strings, js):
-            out = run([CPU, "-m", model, "--tokenize", s], capture_output=True, text=True).stdout.strip()
+            out = run([CPU, "-m", model, "--tokenize", s], capture_output=True, encoding="utf-8",
+                      errors="replace").stdout.strip()
             cpp = [int(x) for x in out.split(",")] if out else []
             if cpp != ids:
                 bad += 1
