@@ -156,6 +156,11 @@ T shfl(T v, int src) {
 // synchronisation & warp intrinsics
 inline void __syncthreads() { emu::tl_block_bar->arrive_and_wait(); }
 inline void __syncwarp(unsigned = 0xffffffffu) { emu::warp_barrier(); }
+// Counts nanoseconds instead of clock cycles (only bench-kernels' spin_kernel uses it).
+inline long long clock64() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
 
 template <typename T>
 T __shfl_xor_sync(unsigned, T v, int lane_mask, int width = 32) {

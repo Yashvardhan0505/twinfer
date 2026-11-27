@@ -49,25 +49,40 @@ void* dmalloc_random(size_t bytes, uint32_t seed) {
   return p;
 }
 
-// median time in us over reps runs, i = which weight copy to use
+// Keeps the GPU busy while time_us queues the calls it times.
+__global__ void spin_kernel(long long cycles) {
+  const long long t0 = clock64();
+  while (clock64() - t0 < cycles) {
+  }
+}
+
+// GPU time per call in us (the median of 5 samples), i = which weight copy to use. Each sample queues a batch of
+// calls behind spin_kernel and times the batch, so the calls run back to back, the way they run inside the engine's
+// decode graph. Timing one call at a time would count the CPU's launch delay too: the GPU sits idle until each launch
+// arrives, about 10 us on a slow host, which swamps a kernel that runs for only a few microseconds.
 double time_us(const std::function<void(int)>& fn, int reps = 50) {
+  const int samples = 5, batch = std::max(1, reps / samples);
   for (int i = 0; i < 5; ++i) fn(i);
   CUDA_CHECK(cudaDeviceSynchronize());
   cudaEvent_t a, b;
   CUDA_CHECK(cudaEventCreate(&a));
   CUDA_CHECK(cudaEventCreate(&b));
-  std::vector<float> t(reps);
-  for (int i = 0; i < reps; ++i) {
+  std::vector<float> t(samples);
+  int i = 0;
+  for (int s = 0; s < samples; ++s) {
+    spin_kernel<<<1, 1>>>(3000000);  // about 2 ms: plenty of time to queue the batch
+    CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaEventRecord(a));
-    fn(i);
+    for (int k = 0; k < batch; ++k) fn(i++);
     CUDA_CHECK(cudaEventRecord(b));
     CUDA_CHECK(cudaEventSynchronize(b));
-    CUDA_CHECK(cudaEventElapsedTime(&t[i], a, b));
+    CUDA_CHECK(cudaEventElapsedTime(&t[s], a, b));
+    t[s] /= batch;
   }
   CUDA_CHECK(cudaEventDestroy(a));
   CUDA_CHECK(cudaEventDestroy(b));
   std::sort(t.begin(), t.end());
-  return t[reps / 2] * 1000.0;
+  return t[samples / 2] * 1000.0;
 }
 
 // C[M, N] (row-major) = A[M, K] . W[N, K]^T with cuBLAS (column-major: C^T = W . A^T).
