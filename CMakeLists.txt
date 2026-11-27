@@ -92,12 +92,15 @@ enable_testing()
 set(Python3_FIND_REGISTRY LAST)  # Windows: prefer the python on PATH (the one numpy got installed into)
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+  # cpu and cuda-e2e create and use the same test models and logits file in the build dir, so they
+  # must not run at the same time (ctest -j, or VS Code's CMake Tools, runs tests in parallel).
   add_test(NAME cpu COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/run_tests.py --cpu
                             --build-dir ${CMAKE_BINARY_DIR})
+  set_tests_properties(cpu PROPERTIES RESOURCE_LOCK test_models)
   if(TARGET twinfer-cuda)
     add_test(NAME cuda-e2e COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/run_tests.py --cuda
                                    --build-dir ${CMAKE_BINARY_DIR})
-    set_tests_properties(cuda-e2e PROPERTIES LABELS gpu)
+    set_tests_properties(cuda-e2e PROPERTIES LABELS gpu RESOURCE_LOCK test_models)
   endif()
 endif()
 if(TARGET test-kernels)
