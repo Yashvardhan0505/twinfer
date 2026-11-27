@@ -32,9 +32,8 @@ foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
 endforeach()
 
 if(MSVC)
-  # /utf-8: sources and string literals are UTF-8. C4068: `#pragma omp simd` isn't known to MSVC's OpenMP 2.0.
-  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/utf-8> $<$<COMPILE_LANGUAGE:CXX>:/W3>
-                      $<$<COMPILE_LANGUAGE:CXX>:/wd4068>)
+  # /utf-8: sources and string literals are UTF-8.
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/utf-8> $<$<COMPILE_LANGUAGE:CXX>:/W3>)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX)
 else()
   add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wall> $<$<COMPILE_LANGUAGE:CXX>:-Wextra>)
