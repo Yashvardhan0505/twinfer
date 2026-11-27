@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "chat.h"
 #include "engine.h"
 #include "platform.h"
 
@@ -208,27 +209,14 @@ inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_e
     }
 
     // interactive chat (KV cache is kept across turns)
-    int pos = 0;
-    bool first = true;
+    ChatSession session(*eng, tok, o.system);
     std::string line;
     std::fprintf(stderr, "chat mode: type a message, empty line or Ctrl-D to quit\n");
     while (true) {
       std::fprintf(stderr, "\n> ");
       if (!std::getline(std::cin, line) || line.empty()) break;
-      std::string text;
-      if (first) {
-        text = chatml_prompt({{"user", line}}, o.system);
-      } else {
-        text = "<|im_end|>\n<|im_start|>user\n" + line + "<|im_end|>\n<|im_start|>assistant\n";
-      }
-      std::vector<int> ids = tok.encode(text);
-      if (pos + static_cast<int>(ids.size()) + o.max_new >= eng->max_seq()) {
-        std::fprintf(stderr, "[context full, starting a new conversation]\n");
-        pos = 0;
-        ids = tok.encode(chatml_prompt({{"user", line}}, o.system));
-      }
-      first = false;
-      GenStats st = generate(*eng, sampler, ids, pos, o.max_new, stops, emit);
+      GenStats st = session.turn(sampler, line, o.max_new, stops, emit,
+                                 [] { std::fprintf(stderr, "[context full, starting a new conversation]\n"); });
       report(st);
     }
     return 0;

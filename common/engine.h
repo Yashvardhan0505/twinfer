@@ -47,8 +47,10 @@ inline double now_s() {
 }
 
 // Prefill `prompt` starting at position `pos`, then sample up to max_new tokens.
-// `pos` is advanced past everything that was fed to the model. The final sampled token
-// (e.g. the stop token) is returned in `pending` and has NOT been fed yet.
+// `pos` is advanced past everything that was fed to the model. The last token produced is returned
+// in `pending` and has NOT been fed yet: the stop token when st.hit_stop, otherwise (when the
+// max_new or context limit cut the reply off) the last token passed to on_token. A chat loop feeds
+// that one at the start of the next turn, so the model sees the reply the user saw.
 inline GenStats generate(Engine& eng, Sampler& sampler, const std::vector<int>& prompt, int& pos, int max_new,
                          const std::vector<int>& stop_ids, const std::function<void(int)>& on_token,
                          int* pending = nullptr) {
@@ -73,7 +75,7 @@ inline GenStats generate(Engine& eng, Sampler& sampler, const std::vector<int>& 
     if (stop) { st.hit_stop = true; break; }
     on_token(next);
     st.gen_tokens++;
-    if (i + 1 == max_new || pos + 1 >= eng.max_seq()) { next = -1; break; }
+    if (i + 1 == max_new || pos + 1 >= eng.max_seq()) break;  // `next` was shown but not fed
     next = pick(&next, 1, pos);
     pos += 1;
   }

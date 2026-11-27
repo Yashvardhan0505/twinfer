@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "../common/chat.h"
 #include "../common/engine.h"
 #include "../cpu/cpu_model.h"
 
@@ -86,6 +87,37 @@ int main(int argc, char** argv) {
     check(lower_id, "a tie at the top of the nucleus goes to the lower id");
     const float one = 3.0f;
     check(sampler(0.6f, 0.9f).sample(&one, 1) == 0, "single-entry vocabulary");
+  }
+
+  std::printf("[chat]\n");
+  {
+    // Two turns whose replies are cut off by max_new. Afterwards the KV cache has to hold exactly
+    // turn1 + reply1 + turn2 + reply2 (minus reply2's last token, which is carried into turn 3):
+    // a fresh engine fed that transcript must give bit-identical logits for the next token.
+    const int max_new = 3;
+    tf::CpuModel chat_eng(mf, 128);
+    tf::ChatSession chat(chat_eng, tok, "be brief");
+    std::vector<int> r1, r2;
+    tf::GenStats s1 = chat.turn(greedy, "hello there", max_new, {}, [&](int t) { r1.push_back(t); });
+    tf::GenStats s2 = chat.turn(greedy, "and then?", max_new, {}, [&](int t) { r2.push_back(t); });
+    check(!s1.hit_stop && !s2.hit_stop && r1.size() == 3 && r2.size() == 3, "both replies ran into max_new");
+
+    std::vector<int> transcript = chat.turn_ids("hello there", true);
+    transcript.insert(transcript.end(), r1.begin(), r1.end());  // all 3 tokens the user saw
+    const std::vector<int> t2 = chat.turn_ids("and then?", false);
+    transcript.insert(transcript.end(), t2.begin(), t2.end());
+    transcript.insert(transcript.end(), r2.begin(), r2.end() - 1);
+    check(chat.pos() == static_cast<int>(transcript.size()), "KV cache length = shown transcript");
+    check(chat.carry() == r2.back(), "last shown token of the cut-off reply is carried");
+
+    tf::CpuModel fresh(mf, 128);
+    transcript.push_back(r2.back());
+    const int next = r2.back();  // what turn 3 would feed first
+    const float* la = chat_eng.forward(&next, 1, chat.pos());
+    std::vector<float> got(la, la + mf.config().vocab_size);
+    const float* lb = fresh.forward(transcript.data(), static_cast<int>(transcript.size()), 0);
+    std::vector<float> want(lb, lb + mf.config().vocab_size);
+    check(got == want, "chat KV cache == fresh forward over the transcript (bit-identical)");
   }
 
   if (g_failures) {

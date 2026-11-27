@@ -1,10 +1,11 @@
 // Chat UI for the WebGPU engine.
 //   ?model=org/name   load any Hugging Face repo with a supported Llama-architecture model
 //   ?base=./models/x/ load config.json / tokenizer.json / model.safetensors from a URL prefix
+import { turnIds } from "./chat.js";
 import { Engine, initDevice } from "./engine.js";
 import { fetchBytes, fetchJson, mergeShards, parseSafetensors } from "./safetensors.js";
 import { Sampler } from "./sampler.js";
-import { SMOLLM_SYSTEM, Tokenizer, chatml } from "./tokenizer.js";
+import { SMOLLM_SYSTEM, Tokenizer } from "./tokenizer.js";
 
 const MODELS = [
   { id: "HuggingFaceTB/SmolLM2-135M-Instruct", label: "SmolLM2-135M-Instruct (270 MB)" },
@@ -20,7 +21,9 @@ const ui = {
   topP: $("top-p"), maxNew: $("max-new"), stats: $("stats"),
 };
 
-const state = { gpu: null, engine: null, tok: null, stopIds: [], pos: 0, firstTurn: true, busy: false, stop: false };
+const state = {
+  gpu: null, engine: null, tok: null, stopIds: [], pos: 0, firstTurn: true, carry: -1, busy: false, stop: false,
+};
 
 const qs = new URLSearchParams(location.search);
 if (qs.get("model") && !MODELS.some((m) => m.id === qs.get("model")))
@@ -146,6 +149,7 @@ ui.folder.onchange = () => {
 function resetChat() {
   state.pos = 0;
   state.firstTurn = true;
+  state.carry = -1;
   ui.chat.querySelectorAll(".msg").forEach((m) => m.remove());
   ui.empty.hidden = false;
 }
@@ -167,14 +171,9 @@ async function send() {
     seed: (Math.random() * 2 ** 31) | 0,
   });
   try {
-    let prompt = state.firstTurn
-      ? chatml([{ role: "user", content: text }], SMOLLM_SYSTEM)
-      : `<|im_end|>\n<|im_start|>user\n${text}<|im_end|>\n<|im_start|>assistant\n`;
-    let ids = tok.encode(prompt);
-    if (state.pos + ids.length + maxNew >= eng.maxSeq) {
-      state.pos = 0; // context full: start over, keeping only this message
-      ids = tok.encode(chatml([{ role: "user", content: text }], SMOLLM_SYSTEM));
-    }
+    const { ids, reset } = turnIds(tok, state, text, { maxNew, maxSeq: eng.maxSeq, system: SMOLLM_SYSTEM });
+    if (reset) state.pos = 0; // context full: start over, keeping only this message
+    state.carry = -1;
     const step = async (toks, pos) =>
       sampler.greedy ? eng.forward(toks, pos, { greedy: true }) : sampler.sample(await eng.forward(toks, pos));
 
@@ -184,16 +183,17 @@ async function send() {
     const tPrefill = performance.now() - t0;
 
     const decoder = new TextDecoder();
-    let generated = 0;
+    let generated = 0, cut = false;
     const t1 = performance.now();
     while (generated < maxNew && !state.stop && !state.stopIds.includes(next)) {
       out.textContent += decoder.decode(tok.tokenBytes(next), { stream: true });
       ui.chat.scrollTop = ui.chat.scrollHeight;
       generated++;
-      if (generated === maxNew || state.pos + 1 >= eng.maxSeq) break;
+      if (generated === maxNew || state.pos + 1 >= eng.maxSeq) { cut = true; break; }
       next = await step([next], state.pos);
       state.pos++;
     }
+    if (cut) state.carry = next; // shown but not fed yet: it goes in front of the next turn
     out.textContent += decoder.decode();
     const tDecode = performance.now() - t1;
     const msPerTok = generated > 1 ? tDecode / (generated - 1) : 0;

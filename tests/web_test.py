@@ -43,6 +43,36 @@ def cpp_tokenize(model, s):
     return [int(x) for x in out.split(",")] if out else []
 
 
+CHAT = ["GPUs run thousands of threads", "def matmul(a, b):", "Shared memory is"]
+CHAT_MAX_NEW = 4  # small, so every reply gets cut off and the next turn has to carry its last token
+
+
+def cpp_chat(model):
+    """Replies of `twinfer-cpu -i`, greedy, one string per turn (decoded like the browser does)."""
+    out = subprocess.run([CPU, "-m", model, "-i", "-n", str(CHAT_MAX_NEW), "--temp", "0", "--quiet"],
+                         input=("\n".join(CHAT) + "\n").encode(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         check=True).stdout
+    # stderr prints "\n> " before each turn; stdout and stderr share the pipe, so that splits the replies
+    return [r.decode("utf-8", "replace") for r in out.split(b"\n> ")[1:-1]]
+
+
+def ui_chat(page, port, model_url):
+    """The same conversation typed into the real chat page (web/index.html)."""
+    page.goto(f"http://127.0.0.1:{port}/web/index.html?base={model_url}")
+    page.click("#load-btn")
+    idle = "!document.querySelector('#send-btn').disabled && !document.querySelector('.msg.streaming')"
+    page.wait_for_function(idle, timeout=600_000)
+    page.fill("#temp", "0")
+    page.fill("#max-new", str(CHAT_MAX_NEW))
+    replies = []
+    for m in CHAT:
+        page.fill("#input", m)
+        page.click("#send-btn")
+        page.wait_for_function(idle, timeout=600_000)
+        replies.append(page.evaluate("[...document.querySelectorAll('.msg.assistant')].pop().textContent"))
+    return replies
+
+
 def main():
     from playwright.sync_api import sync_playwright
 
@@ -88,6 +118,9 @@ def main():
         page.goto(f"http://127.0.0.1:{port}/web/test.html?input=/build/web_test_input.json")
         page.wait_for_function("window.__result !== undefined", timeout=600_000)
         res = page.evaluate("window.__result")
+        chat_page = browser.new_page()
+        chat_page.on("console", lambda m: print("  [browser]", m.text) if m.type == "error" else None)
+        js_chat = ui_chat(chat_page, port, "/build/tiny_qwen/")
         browser.close()
     httpd.shutdown()
 
@@ -127,6 +160,13 @@ def main():
         good = bytes(r["gen_bytes"]) == cpp_out
         print(f"[{name}] greedy generation: js={r['gen_text']!r} identical bytes to C++: {good}  {'ok' if good else 'FAIL'}")
         ok &= good
+    want = cpp_chat(qwen)
+    good = js_chat == want
+    print(f"[chat page] {len(CHAT)} turns cut off at {CHAT_MAX_NEW} tokens, same replies as `twinfer-cpu -i`: "
+          f"{good}  {'ok' if good else 'FAIL'}")
+    if not good:
+        print(f"    page: {js_chat!r}\n    c++ : {want!r}")
+    ok &= good
     if not ok:
         raise SystemExit("WebGPU tests FAILED")
     print("all WebGPU tests passed")

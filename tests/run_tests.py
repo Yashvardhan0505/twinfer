@@ -86,7 +86,8 @@ def test_cpu(r, tiny, qwen):
         print(f"[C++ unit tests] {unit} not built, skipping")
     node = shutil.which("node")
     if node:
-        res = subprocess.run([node, os.path.join(ROOT, "tests", "js_unit.mjs")], capture_output=True, text=True)
+        res = subprocess.run([node, os.path.join(ROOT, "tests", "js_unit.mjs"), os.path.join(tiny, "tokenizer.json")],
+                             capture_output=True, text=True)
         print(res.stdout + res.stderr, end="", flush=True)
         r.line("js unit tests", f"exit code {res.returncode}", res.returncode == 0)
     print("[cpu engine vs numpy reference]")
