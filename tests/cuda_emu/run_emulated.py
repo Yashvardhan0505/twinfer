@@ -21,7 +21,7 @@ def run(cmd, **kw):
 def build():
     src = os.path.join(EMU, "src")
     run([sys.executable, os.path.join(ROOT, "tests", "cuda_emu", "preprocess.py"), ROOT, src])
-    common = [os.path.join(ROOT, "common", f) for f in ("model_files.cpp", "tokenizer.cpp")]
+    common = [os.path.join(ROOT, "common", f) for f in ("model_files.cpp", "tokenizer.cpp", "platform.cpp")]
     run([CXX, *FLAGS, "-o", os.path.join(EMU, "test-kernels"), "-x", "c++", os.path.join(src, "cuda", "test_kernels.cu")])
     run([CXX, *FLAGS, "-o", os.path.join(EMU, "twinfer-cuda"), "-x", "c++", os.path.join(src, "cuda", "main.cu"),
          os.path.join(src, "cuda", "cuda_model.cu"), "-x", "none", *common])

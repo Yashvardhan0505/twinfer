@@ -1,10 +1,11 @@
 // Chat UI for the WebGPU engine.
-//   ?model=org/name   load any Hugging Face repo with a supported Llama-architecture model
+//   ?model=org/name   load a Hugging Face repo (Llama-architecture model with a byte-level BPE tokenizer)
 //   ?base=./models/x/ load config.json / tokenizer.json / model.safetensors from a URL prefix
+import { defaultSystemPrompt, shownBytes, turnIds } from "./chat.js";
 import { Engine, initDevice } from "./engine.js";
-import { fetchBytes, fetchJson, mergeShards, parseSafetensors } from "./safetensors.js";
+import { loadModelFromUrl, mergeShards, parseSafetensors } from "./safetensors.js";
 import { Sampler } from "./sampler.js";
-import { SMOLLM_SYSTEM, Tokenizer, chatml } from "./tokenizer.js";
+import { Tokenizer } from "./tokenizer.js";
 
 const MODELS = [
   { id: "HuggingFaceTB/SmolLM2-135M-Instruct", label: "SmolLM2-135M-Instruct (270 MB)" },
@@ -20,7 +21,10 @@ const ui = {
   topP: $("top-p"), maxNew: $("max-new"), stats: $("stats"),
 };
 
-const state = { gpu: null, engine: null, tok: null, stopIds: [], pos: 0, firstTurn: true, busy: false, stop: false };
+const state = {
+  gpu: null, engine: null, tok: null, system: "", stopIds: [], pos: 0, firstTurn: true, carry: -1, busy: false,
+  stop: false,
+};
 
 const qs = new URLSearchParams(location.search);
 if (qs.get("model") && !MODELS.some((m) => m.id === qs.get("model")))
@@ -63,22 +67,9 @@ function setBusy(busy) {
 
 // Loading
 
-async function loadFromUrlBase(base) {
-  const config = await fetchJson(base + "config.json");
-  const tokenizer = await fetchJson(base + "tokenizer.json");
-  const progress = (label) => (got, total, cached) =>
-    setProgress(total ? got / total : 0, `${label}${cached ? " (cache)" : ""}: ${mb(got)} / ${total ? mb(total) : "?"} MB`);
-  let weights;
-  try {
-    weights = parseSafetensors(await fetchBytes(base + "model.safetensors", progress("model.safetensors")));
-  } catch (e) {
-    const index = await fetchJson(base + "model.safetensors.index.json"); // sharded checkpoint
-    const files = [...new Set(Object.values(index.weight_map))];
-    const shards = [];
-    for (const f of files) shards.push(parseSafetensors(await fetchBytes(base + f, progress(f))));
-    weights = mergeShards(shards);
-  }
-  return { config, tokenizer, weights };
+function loadFromUrlBase(base) {
+  return loadModelFromUrl(base, (label, got, total, cached) =>
+    setProgress(total ? got / total : 0, `${label}${cached ? " (cache)" : ""}: ${mb(got)} / ${total ? mb(total) : "?"} MB`));
 }
 
 async function loadFromFiles(fileList) {
@@ -89,22 +80,27 @@ async function loadFromFiles(fileList) {
   };
   const config = JSON.parse(await need("config.json").text());
   const tokenizer = JSON.parse(await need("tokenizer.json").text());
+  const optional = async (n) => (files.has(n) ? files.get(n).text() : null);
+  const tokenizerConfig = JSON.parse((await optional("tokenizer_config.json")) ?? "null");
+  const chatTemplate = await optional("chat_template.jinja");
   const shards = [];
   for (const [name, f] of files)
     if (name.endsWith(".safetensors")) shards.push(parseSafetensors(await f.arrayBuffer()));
   if (!shards.length) throw new Error("no .safetensors file in folder");
-  return { config, tokenizer, weights: mergeShards(shards) };
+  return { config, tokenizer, tokenizerConfig, chatTemplate, weights: mergeShards(shards) };
 }
 
 async function load(getFiles, label) {
   setBusy(true);
+  if (state.engine) state.engine.destroy(); // free the previous model's GPU memory first
   state.engine = null;
   try {
     if (!state.gpu) state.gpu = await initDevice();
     const t0 = performance.now();
     setProgress(0, "downloading...");
-    let { config, tokenizer, weights } = await getFiles();
+    let { config, tokenizer, tokenizerConfig, chatTemplate, weights } = await getFiles();
     state.tok = new Tokenizer(tokenizer);
+    state.system = defaultSystemPrompt(tokenizerConfig, chatTemplate); // the model's own, like HF
     setProgress(0, "uploading weights to the GPU...");
     state.engine = await Engine.create({
       device: state.gpu.device, config, weights, maxSeq: MAX_SEQ,
@@ -146,6 +142,7 @@ ui.folder.onchange = () => {
 function resetChat() {
   state.pos = 0;
   state.firstTurn = true;
+  state.carry = -1;
   ui.chat.querySelectorAll(".msg").forEach((m) => m.remove());
   ui.empty.hidden = false;
 }
@@ -167,14 +164,9 @@ async function send() {
     seed: (Math.random() * 2 ** 31) | 0,
   });
   try {
-    let prompt = state.firstTurn
-      ? chatml([{ role: "user", content: text }], SMOLLM_SYSTEM)
-      : `<|im_end|>\n<|im_start|>user\n${text}<|im_end|>\n<|im_start|>assistant\n`;
-    let ids = tok.encode(prompt);
-    if (state.pos + ids.length + maxNew >= eng.maxSeq) {
-      state.pos = 0; // context full: start over, keeping only this message
-      ids = tok.encode(chatml([{ role: "user", content: text }], SMOLLM_SYSTEM));
-    }
+    const { ids, reset } = turnIds(tok, state, text, { maxNew, maxSeq: eng.maxSeq, system: state.system });
+    if (reset) state.pos = 0; // context full: start over, keeping only this message
+    state.carry = -1;
     const step = async (toks, pos) =>
       sampler.greedy ? eng.forward(toks, pos, { greedy: true }) : sampler.sample(await eng.forward(toks, pos));
 
@@ -184,24 +176,26 @@ async function send() {
     const tPrefill = performance.now() - t0;
 
     const decoder = new TextDecoder();
-    let generated = 0;
+    let generated = 0, steps = 0, cut = false; // steps = single-token forward passes timed below
     const t1 = performance.now();
     while (generated < maxNew && !state.stop && !state.stopIds.includes(next)) {
-      out.textContent += decoder.decode(tok.tokenBytes(next), { stream: true });
+      out.textContent += decoder.decode(shownBytes(tok, next), { stream: true });
       ui.chat.scrollTop = ui.chat.scrollHeight;
       generated++;
-      if (generated === maxNew || state.pos + 1 >= eng.maxSeq) break;
+      if (generated === maxNew || state.pos + 1 >= eng.maxSeq) { cut = true; break; }
       next = await step([next], state.pos);
       state.pos++;
+      steps++;
     }
+    if (cut) state.carry = next; // shown but not fed yet: it goes in front of the next turn
     out.textContent += decoder.decode();
     const tDecode = performance.now() - t1;
-    const msPerTok = generated > 1 ? tDecode / (generated - 1) : 0;
+    const msPerTok = steps ? tDecode / steps : 0;
     const gbps = msPerTok ? eng.weightBytes / (msPerTok / 1000) / 1e9 : 0;
     const bw = gbps >= 1 ? `${gbps.toFixed(1)} GB/s` : `${(gbps * 1000).toFixed(0)} MB/s`;
     ui.stats.innerHTML =
       `prefill <b>${ids.length}</b> tokens in ${tPrefill.toFixed(0)} ms | ` +
-      `decode <b>${(generated > 1 ? (1000 / msPerTok) : 0).toFixed(1)}</b> tok/s (${msPerTok.toFixed(1)} ms/token) | ` +
+      `decode <b>${(msPerTok ? 1000 / msPerTok : 0).toFixed(1)}</b> tok/s (${msPerTok.toFixed(1)} ms/token) | ` +
       `weights read at <b>${bw}</b> | context ${state.pos}/${eng.maxSeq}`;
     state.firstTurn = false;
   } catch (e) {

@@ -3,6 +3,7 @@
 
   --cpu              C++ CPU engine vs the numpy reference; C++ tokenizer vs the JS tokenizer (Node)
   --cuda             CUDA engine vs the CPU engine (decode/graph, chunked prefill, int8, bias/untied)
+  --build-dir DIR    where the binaries are and the test models go (default: build/)
   --cuda-bin PATH    CUDA binary to test (default build/twinfer-cuda; the emulator passes its own)
   --quick            fewer tokens (for the slow CPU emulator)
 """
@@ -17,8 +18,9 @@ import sys
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EXE = ".exe" if os.name == "nt" else ""
 BUILD = os.path.join(ROOT, "build")
-CPU = os.path.join(BUILD, "twinfer-cpu")
+CPU = os.path.join(BUILD, "twinfer-cpu" + EXE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 FIXED = [
@@ -30,20 +32,26 @@ FIXED = [
 ]
 POOL = list("abcXYZ019 \t\n\r.,;:'!?-_()[]{}\"") + ["é", "ß", "न", "ि", "ं", "你", "。", "😀", " ", " ",
                                                      "½", "²", "٣", "́", "—", "’", "　", "Ω"]
-TOKENS = [342, 531, 500, 492, 543, 454, 35, 52, 53, 535, 554, 118, 49]
-VOCAB = 559
+TOKENS = [342, 531, 500, 492, 543, 454, 35, 52, 53, 535, 554, 118, 49]  # all < the tiny models' vocab (559)
 
 
 def run(cmd, **kw):
-    return subprocess.run(cmd, check=True, **kw)
+    try:
+        return subprocess.run(cmd, check=True, **kw)
+    except subprocess.CalledProcessError as e:
+        if e.stderr:  # it was captured, so it isn't in the log: show why the command failed, not just its exit code
+            sys.stderr.write(e.stderr if isinstance(e.stderr, str) else e.stderr.decode("utf-8", "replace"))
+            sys.stderr.flush()
+        raise
 
 
 def ensure_models():
     tiny, qwen = os.path.join(BUILD, "tiny"), os.path.join(BUILD, "tiny_qwen")
     mk = [sys.executable, os.path.join(ROOT, "tools", "make_tiny_model.py")]
-    if not os.path.exists(os.path.join(tiny, "model.safetensors")):
+    made = lambda d: all(os.path.exists(os.path.join(d, f)) for f in ("model.safetensors", "tokenizer_config.json"))
+    if not made(tiny):
         run(mk + ["--out", tiny])
-    if not os.path.exists(os.path.join(qwen, "model.safetensors")):
+    if not made(qwen):
         run(mk + ["--out", qwen, "--qkv-bias", "--untied", "--dtype", "F32", "--merges-as-arrays", "--seed", "1",
                   "--pretok", "qwen2"])
     return tiny, qwen
@@ -52,8 +60,10 @@ def ensure_models():
 def dump(binary, model, tokens, chunk, extra=(), env=None):
     out = os.path.join(BUILD, "test_logits.bin")
     run([binary, "-m", model, "--tokens", ",".join(map(str, tokens)), "--dump-logits", out, "--prefill-chunk",
-         str(chunk), *extra], stderr=subprocess.DEVNULL, env=env)
-    return np.fromfile(out, np.float32).reshape(-1, VOCAB)
+         str(chunk), *extra], stderr=subprocess.PIPE, env=env)  # shown only if it fails
+    with open(os.path.join(model, "config.json")) as f:
+        vocab = json.load(f)["vocab_size"]
+    return np.fromfile(out, np.float32).reshape(-1, vocab)
 
 
 class Report:
@@ -74,12 +84,25 @@ class Report:
 def test_cpu(r, tiny, qwen):
     import reference
 
+    unit = os.path.join(BUILD, "test-common" + EXE)
+    if os.path.exists(unit):
+        print("[C++ unit tests: generation loop, sampler, chat turns]")
+        res = subprocess.run([unit, tiny], capture_output=True, text=True)
+        print(res.stdout + res.stderr, end="", flush=True)
+        r.line("test-common", f"exit code {res.returncode}", res.returncode == 0)
+    else:
+        print(f"[C++ unit tests] {unit} not built, skipping")
+    node = shutil.which("node")
+    if node:
+        res = subprocess.run([node, os.path.join(ROOT, "tests", "js_unit.mjs"), os.path.join(tiny, "tokenizer.json")],
+                             capture_output=True, text=True)
+        print(res.stdout + res.stderr, end="", flush=True)
+        r.line("js unit tests", f"exit code {res.returncode}", res.returncode == 0)
     print("[cpu engine vs numpy reference]")
     for name, model in (("llama-style, bf16, tied", tiny), ("qwen-style, f32, bias, untied", qwen)):
         ref = reference.forward(model, TOKENS)
         r.logits(name, ref, dump(CPU, model, TOKENS, 1), 1e-5)
     print("[tokenizer: C++ (hand-written scanners) vs JS (regex engine)]")
-    node = shutil.which("node")
     if not node:
         print("  node not found, skipping")
         return
@@ -93,7 +116,8 @@ def test_cpu(r, tiny, qwen):
                              path], capture_output=True).stdout)
         bad = 0
         for s, ids in zip(strings, js):
-            out = run([CPU, "-m", model, "--tokenize", s], capture_output=True, text=True).stdout.strip()
+            out = run([CPU, "-m", model, "--tokenize", s], capture_output=True, encoding="utf-8",
+                      errors="replace").stdout.strip()
             cpp = [int(x) for x in out.split(",")] if out else []
             if cpp != ids:
                 bad += 1
@@ -120,22 +144,26 @@ def test_cuda(r, tiny, qwen, binary, quick):
 
 
 def main():
+    global BUILD, CPU
     ap = argparse.ArgumentParser()
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--cuda", action="store_true")
-    ap.add_argument("--cuda-bin", default=os.path.join(BUILD, "twinfer-cuda"))
+    ap.add_argument("--build-dir", default=BUILD)
+    ap.add_argument("--cuda-bin")
     ap.add_argument("--quick", action="store_true")
     a = ap.parse_args()
     if not (a.cpu or a.cuda):
         a.cpu = True
+    BUILD = os.path.abspath(a.build_dir)
+    CPU = os.path.join(BUILD, "twinfer-cpu" + EXE)
     if not os.path.exists(CPU):
-        raise SystemExit("build the CPU engine first: make cpu")
+        raise SystemExit(f"build the CPU engine first (make cpu, or cmake --build): {CPU} not found")
     tiny, qwen = ensure_models()
     r = Report()
     if a.cpu:
         test_cpu(r, tiny, qwen)
     if a.cuda:
-        test_cuda(r, tiny, qwen, a.cuda_bin, a.quick)
+        test_cuda(r, tiny, qwen, a.cuda_bin or os.path.join(BUILD, "twinfer-cuda" + EXE), a.quick)
     if r.failed:
         raise SystemExit(f"{r.failed} test(s) FAILED")
     print("all tests passed")

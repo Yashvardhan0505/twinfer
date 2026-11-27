@@ -9,30 +9,60 @@ jobs:
     name: CPU engine + tokenizers
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - run: pip install numpy
       - run: make cpu
       - run: make test
+
+  windows:
+    name: Windows (MSVC + CMake), CPU engine + tokenizers
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install numpy
+      - run: cmake -B build -DTWINFER_CUDA=OFF -DPython3_EXECUTABLE="$((Get-Command python).Source)"
+      - run: cmake --build build --config Release
+      - run: ctest --test-dir build -C Release -LE gpu --output-on-failure
 
   cuda-emulated:
     name: CUDA kernels (CPU emulator, no GPU)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - run: pip install numpy
       - run: make cpu
       - run: make test-emu
 
   cuda-compile:
-    name: CUDA build (nvcc, sm_75 + sm_80 + sm_89)
+    name: CUDA ${{ matrix.cuda }} build (nvcc, ${{ matrix.archs }})
     runs-on: ubuntu-24.04
-    container: nvidia/cuda:12.4.1-devel-ubuntu22.04
+    container: nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # CUDA 12.x still compiles for Volta (sm_70); 12.8 is the first with Blackwell (sm_120).
+          - cuda: "12.8.1"
+            archs: "sm_70 sm_80 sm_89 sm_120"
+          # CUDA 13 dropped everything below sm_75.
+          - cuda: "13.2.0"
+            archs: "sm_75 sm_90 sm_120"
     steps:
-      - uses: actions/checkout@v4
-      - run: apt-get update -qq && apt-get install -y -qq make
-      - run: make cuda ARCH=sm_75
-      - run: make clean && make cuda ARCH=sm_80
-      - run: make clean && make cuda ARCH=sm_89
+      - uses: actions/checkout@v6
+      - run: apt-get update -qq && apt-get install -y -qq make cmake
+      - name: make, one build per architecture
+        run: for a in ${{ matrix.archs }}; do make clean && make cuda ARCH=$a || exit 1; done
+      - name: cmake (RTX 50 series)
+        run: cmake -B build-cmake -DCMAKE_CUDA_ARCHITECTURES=120 && cmake --build build-cmake -j 2
 
   webgpu:
     name: WebGPU backend (headless Chromium, SwiftShader)
@@ -40,7 +70,10 @@ jobs:
     # Software WebGPU availability differs between Chromium builds; keep this job informational.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - run: pip install numpy playwright
       - run: python -m playwright install --with-deps chromium
       - run: make cpu

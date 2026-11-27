@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstdio>
 #include <stdexcept>
 
 #include "json.h"
@@ -219,6 +220,24 @@ Tokenizer::Tokenizer(const std::string& path) {
     visit(*pre);
   }
   if (!have_bytelevel_split) throw std::runtime_error("expected a ByteLevel or Split pre-tokenizer");
+
+  // Normalizer. NFC (Qwen2.5) isn't implemented here (the JS tokenizer applies it). Text that is
+  // already NFC, which is nearly everything people type, isn't affected, so warn rather than refuse.
+  // Anything else would silently give different tokens from Hugging Face, so it's an error.
+  auto check_normalizer = [](const Json& n, const auto& self) -> void {
+    if (n.is_null()) return;
+    const std::string t = n.string_or("type", "");
+    if (t == "Sequence") {
+      for (const Json& x : n.at("normalizers").arr) self(x, self);
+    } else if (t == "NFC") {
+      std::fprintf(stderr,
+                   "warning: this tokenizer normalizes text to NFC, which the C++ tokenizer doesn't do yet; text "
+                   "that isn't already NFC can tokenize differently from Hugging Face\n");
+    } else {
+      throw std::runtime_error("unsupported tokenizer normalizer: " + (t.empty() ? std::string("(no type)") : t));
+    }
+  };
+  if (const Json* norm = j.get("normalizer")) check_normalizer(*norm, check_normalizer);
 
   // Vocabulary.
   uint32_t b2u[256];

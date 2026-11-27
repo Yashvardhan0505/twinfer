@@ -362,7 +362,10 @@ int CudaModel::forward_argmax(const int* tokens, int n, int pos0) {
   CUDA_CHECK_LAST();
   CUDA_CHECK(cudaMemcpyAsync(p_->h_argmax, p_->d_argmax, sizeof(int), cudaMemcpyDeviceToHost, p_->stream));
   CUDA_CHECK(cudaStreamSynchronize(p_->stream));
-  return *p_->h_argmax;
+  const int id = *p_->h_argmax;
+  // The kernel leaves its INT_MAX sentinel when no logit compares greater than -inf (all NaN).
+  if (id < 0 || id >= p_->c.vocab_size) throw std::runtime_error("argmax: no finite logit (NaN in the forward pass?)");
+  return id;
 }
 
 }  // namespace tf

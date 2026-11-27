@@ -78,7 +78,12 @@ export class Engine {
     );
     const c = parseConfig(config);
     const e = new Engine(device, c, weights, Math.min(maxSeq, c.maxPos), sources);
-    await e.init(onProgress);
+    try {
+      await e.init(onProgress);
+    } catch (err) {
+      e.destroy(); // don't leave half the weights on the GPU
+      throw err;
+    }
     return e;
   }
 
@@ -89,7 +94,18 @@ export class Engine {
     this.maxSeq = maxSeq;
     this.sources = sources;
     this.pipelines = new Map();
+    this.buffers = []; // every GPU buffer this engine created, for destroy()
     this.weightBytes = 0;
+  }
+
+  // Frees the weights, KV cache and activations now. Dropping the last reference would only free
+  // them whenever the garbage collector runs, which the GPU's memory pressure doesn't trigger, so
+  // loading a second model could run out of memory with the first one still allocated.
+  destroy() {
+    for (const b of this.buffers) b.destroy(); // destroying twice is allowed (staging buffers)
+    this.buffers = [];
+    this.layers = [];
+    this.pipelines.clear();
   }
 
   async module(name) {
@@ -110,7 +126,9 @@ export class Engine {
   }
 
   buffer(size, usage, label) {
-    return this.device.createBuffer({ size: align(Math.max(size, 16), 16), usage, label });
+    const b = this.device.createBuffer({ size: align(Math.max(size, 16), 16), usage, label });
+    this.buffers.push(b);
+    return b;
   }
 
   f32Buffer(arr, label) {
@@ -321,6 +339,7 @@ export class Engine {
   // Run tokens at positions [pos0, pos0 + n). Returns the last token's logits (Float32Array),
   // or its argmax when `greedy` (only 4 bytes are read back).
   async forward(tokens, pos0, { greedy = false } = {}) {
+    if (!tokens.length) throw new Error("forward() needs at least one token");
     if (pos0 + tokens.length > this.maxSeq) throw new Error("context length exceeded");
     const q = this.device.queue;
     for (let i = 0; i < tokens.length; i++) {
@@ -347,6 +366,8 @@ export class Engine {
     if (greedy) result = new Uint32Array(rb.getMappedRange(0, 4))[0];
     else result = new Float32Array(rb.getMappedRange(0, this.c.vocab * 4).slice(0));
     rb.unmap();
+    // The argmax shader leaves 0xffffffff when no logit is greater than -3.4e38 (all NaN).
+    if (greedy && result >= this.c.vocab) throw new Error("argmax: no finite logit (NaN in the forward pass?)");
     return result;
   }
 }

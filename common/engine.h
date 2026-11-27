@@ -34,11 +34,13 @@ class Engine {
 struct GenStats {
   int prompt_tokens = 0;
   double prefill_s = 0.0;
-  int gen_tokens = 0;
+  int gen_tokens = 0;    // tokens produced (the first one comes out of the prefill)
+  int decode_steps = 0;  // single-token forward passes, i.e. what decode_s actually timed
   double decode_s = 0.0;
   bool hit_stop = false;
   double prefill_tps() const { return prefill_s > 0 ? prompt_tokens / prefill_s : 0.0; }
-  double decode_tps() const { return decode_s > 0 ? gen_tokens / decode_s : 0.0; }
+  double decode_tps() const { return decode_s > 0 ? decode_steps / decode_s : 0.0; }
+  double ms_per_token() const { return decode_steps > 0 ? decode_s * 1e3 / decode_steps : 0.0; }
 };
 
 inline double now_s() {
@@ -47,8 +49,10 @@ inline double now_s() {
 }
 
 // Prefill `prompt` starting at position `pos`, then sample up to max_new tokens.
-// `pos` is advanced past everything that was fed to the model. The final sampled token
-// (e.g. the stop token) is returned in `pending` and has NOT been fed yet.
+// `pos` is advanced past everything that was fed to the model. The last token produced is returned
+// in `pending` and has NOT been fed yet: the stop token when st.hit_stop, otherwise (when the
+// max_new or context limit cut the reply off) the last token passed to on_token. A chat loop feeds
+// that one at the start of the next turn, so the model sees the reply the user saw.
 inline GenStats generate(Engine& eng, Sampler& sampler, const std::vector<int>& prompt, int& pos, int max_new,
                          const std::vector<int>& stop_ids, const std::function<void(int)>& on_token,
                          int* pending = nullptr) {
@@ -59,6 +63,7 @@ inline GenStats generate(Engine& eng, Sampler& sampler, const std::vector<int>& 
     if (sampler.greedy()) return eng.forward_argmax(toks, n, p);
     return sampler.sample(eng.forward(toks, n, p), vocab);
   };
+  if (prompt.empty()) throw std::runtime_error("empty prompt (nothing to feed the model)");
   if (pos + static_cast<int>(prompt.size()) >= eng.max_seq()) throw std::runtime_error("prompt exceeds context");
   double t0 = now_s();
   int next = pick(prompt.data(), static_cast<int>(prompt.size()), pos);
@@ -72,9 +77,10 @@ inline GenStats generate(Engine& eng, Sampler& sampler, const std::vector<int>& 
     if (stop) { st.hit_stop = true; break; }
     on_token(next);
     st.gen_tokens++;
-    if (i + 1 == max_new || pos + 1 >= eng.max_seq()) { next = -1; break; }
+    if (i + 1 == max_new || pos + 1 >= eng.max_seq()) break;  // `next` was shown but not fed
     next = pick(&next, 1, pos);
     pos += 1;
+    st.decode_steps++;
   }
   st.decode_s = now_s() - t0;
   if (pending) *pending = next;

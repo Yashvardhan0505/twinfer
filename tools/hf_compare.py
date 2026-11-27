@@ -45,8 +45,9 @@ def main():
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    cpu = os.path.join(BUILD, "twinfer-cpu")
-    cuda = os.path.join(BUILD, "twinfer-cuda")
+    exe = ".exe" if os.name == "nt" else ""
+    cpu = os.path.join(BUILD, "twinfer-cpu" + exe)
+    cuda = os.path.join(BUILD, "twinfer-cuda" + exe)
     tok = AutoTokenizer.from_pretrained(a.model)
     failures = 0
 
@@ -77,6 +78,7 @@ def main():
     if ours != theirs:
         print("  HF  :", repr(theirs))
         print("  ours:", repr(ours))
+        failures += 1
 
     # 3. logits
     model = AutoModelForCausalLM.from_pretrained(a.model, torch_dtype=torch.float32)

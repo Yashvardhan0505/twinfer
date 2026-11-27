@@ -11,14 +11,17 @@
 #include <string>
 #include <vector>
 
+#include "chat.h"
 #include "engine.h"
+#include "platform.h"
 
 namespace tf {
 
 struct Options {
   std::string model;
   std::string prompt = "Explain what a GPU kernel is in two sentences.";
-  std::string system = kSmolLMSystemPrompt;
+  std::string system;          // --system; default: the one in the model's chat template
+  bool system_given = false;
   int max_new = 256;
   int ctx = 2048;
   float temperature = 0.6f;
@@ -36,22 +39,26 @@ struct Options {
   bool int8 = false;
   bool cuda_graph = true;
   int bench_tokens = 0;      // --bench N: decode N tokens greedily and report throughput
+  int bench_prompt = 0;      // --bench-prompt N: prompt length for --bench (0 = the prompt as is)
 };
 
 inline void print_usage(const char* prog, bool cuda) {
   std::fprintf(stderr,
                "usage: %s -m MODEL_DIR [options]\n"
                "  -p, --prompt TEXT     prompt (wrapped in the chat template unless --raw)\n"
-               "  -i, --interactive     multi-turn chat\n"
+               "  -i, --interactive     multi-turn chat (with --raw: keeps continuing your text)\n"
                "  -n, --max-new N       max new tokens (default 256)\n"
                "  --temp T              temperature, 0 = greedy (default 0.6)\n"
                "  --top-p P             nucleus sampling threshold (default 0.9)\n"
                "  --seed S              RNG seed\n"
                "  --ctx N               context length / KV cache size (default 2048)\n"
-               "  --system TEXT         system prompt for chat mode\n"
+               "  --system TEXT         system prompt for chat mode (default: the model's own, from its\n"
+               "                        chat template; \"\" for none)\n"
                "  --raw                 plain completion, no chat template\n"
                "  --quiet               print only the generated text\n"
                "  --bench N             greedy-decode N tokens and report tokens/s\n"
+               "  --bench-prompt N      prompt length for --bench, made by repeating the prompt's tokens\n"
+               "                        (prefill speed needs a few hundred tokens to mean anything)\n"
                "testing:\n"
                "  --tokens 1,2,3        feed these token ids instead of a prompt\n"
                "  --dump-logits FILE    write float32 logits per chunk and exit\n"
@@ -74,17 +81,19 @@ inline std::vector<int> parse_ids(const std::string& s) {
   return v;
 }
 
-inline Options parse_options(int argc, char** argv, bool cuda) {
+inline Options parse_options(const std::vector<std::string>& args, bool cuda) {
   Options o;
+  const int argc = static_cast<int>(args.size());
+  const char* prog = argc > 0 ? args[0].c_str() : "twinfer";
   auto need = [&](int& i) -> std::string {
     if (i + 1 >= argc) {
-      std::fprintf(stderr, "missing value for %s\n", argv[i]);
+      std::fprintf(stderr, "missing value for %s\n", args[i].c_str());
       std::exit(2);
     }
-    return argv[++i];
+    return args[++i];
   };
   for (int i = 1; i < argc; ++i) {
-    std::string a = argv[i];
+    const std::string& a = args[i];
     if (a == "-m" || a == "--model") o.model = need(i);
     else if (a == "-p" || a == "--prompt") o.prompt = need(i);
     else if (a == "-n" || a == "--max-new") o.max_new = std::atoi(need(i).c_str());
@@ -92,7 +101,7 @@ inline Options parse_options(int argc, char** argv, bool cuda) {
     else if (a == "--top-p") o.top_p = static_cast<float>(std::atof(need(i).c_str()));
     else if (a == "--seed") o.seed = std::strtoull(need(i).c_str(), nullptr, 10);
     else if (a == "--ctx") o.ctx = std::atoi(need(i).c_str());
-    else if (a == "--system") o.system = need(i);
+    else if (a == "--system") { o.system = need(i); o.system_given = true; }
     else if (a == "--raw") o.raw = true;
     else if (a == "-i" || a == "--interactive") o.interactive = true;
     else if (a == "--quiet") o.quiet = true;
@@ -101,17 +110,18 @@ inline Options parse_options(int argc, char** argv, bool cuda) {
     else if (a == "--prefill-chunk") o.prefill_chunk = std::max(1, std::atoi(need(i).c_str()));
     else if (a == "--tokenize") { o.tokenize = need(i); o.tokenize_mode = true; }
     else if (a == "--bench") o.bench_tokens = std::atoi(need(i).c_str());
+    else if (a == "--bench-prompt") o.bench_prompt = std::atoi(need(i).c_str());
     else if (cuda && a == "--int8") o.int8 = true;
     else if (cuda && a == "--no-graph") o.cuda_graph = false;
-    else if (a == "-h" || a == "--help") { print_usage(argv[0], cuda); std::exit(0); }
+    else if (a == "-h" || a == "--help") { print_usage(prog, cuda); std::exit(0); }
     else {
       std::fprintf(stderr, "unknown option %s\n", a.c_str());
-      print_usage(argv[0], cuda);
+      print_usage(prog, cuda);
       std::exit(2);
     }
   }
   if (o.model.empty()) {
-    print_usage(argv[0], cuda);
+    print_usage(prog, cuda);
     std::exit(2);
   }
   return o;
@@ -120,7 +130,8 @@ inline Options parse_options(int argc, char** argv, bool cuda) {
 using EngineFactory = std::function<std::unique_ptr<Engine>(const ModelFiles&, const Options&)>;
 
 inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_engine) {
-  Options o = parse_options(argc, argv, cuda);
+  setup_console();
+  Options o = parse_options(utf8_args(argc, argv), cuda);
   try {
     ModelFiles mf(o.model);
     Tokenizer tok(mf.tokenizer_path());
@@ -138,6 +149,8 @@ inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_e
     if (!o.quiet) std::fprintf(stderr, "backend: %s, loaded in %.2fs, context %d\n", eng->name(), now_s() - t0, o.ctx);
 
     const bool chat = !o.raw && tok.token_id("<|im_start|>") >= 0;
+    if (!o.system_given) o.system = model_system_prompt(mf.dir());
+    if (chat && !o.quiet) std::fprintf(stderr, "system prompt: %s\n", o.system.empty() ? "(none)" : o.system.c_str());
     auto build_prompt = [&](const std::string& user) {
       if (!chat) return tok.encode(user);
       return tok.encode(chatml_prompt({{"user", user}}, o.system));
@@ -182,14 +195,18 @@ inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_e
       g.temperature = 0.0f;
       Sampler greedy(g);
       std::vector<int> ids = o.tokens.empty() ? build_prompt(o.prompt) : o.tokens;
+      if (o.bench_prompt > 0 && !ids.empty()) {  // repeat the prompt's tokens up to the requested length
+        const std::vector<int> base = ids;
+        while (static_cast<int>(ids.size()) < o.bench_prompt) ids.insert(ids.end(), base.begin(), base.end());
+        ids.resize(static_cast<size_t>(o.bench_prompt));
+      }
       int pos = 0;
       // Warm-up run (builds CUDA graphs, warms caches), then the measured run.
       generate(*eng, greedy, ids, pos, 8, {}, [](int) {});
       pos = 0;
       GenStats st = generate(*eng, greedy, ids, pos, o.bench_tokens, {}, [](int) {});
       std::printf("prompt_tokens=%d prefill_tok_s=%.1f decode_tokens=%d decode_tok_s=%.1f ms_per_token=%.3f backend=%s\n",
-                  st.prompt_tokens, st.prefill_tps(), st.gen_tokens, st.decode_tps(),
-                  st.gen_tokens ? st.decode_s * 1e3 / st.gen_tokens : 0.0, eng->name());
+                  st.prompt_tokens, st.prefill_tps(), st.gen_tokens, st.decode_tps(), st.ms_per_token(), eng->name());
       return 0;
     }
 
@@ -203,28 +220,17 @@ inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_e
       return 0;
     }
 
-    // interactive chat (KV cache is kept across turns)
-    int pos = 0;
-    bool first = true;
+    // interactive chat (KV cache is kept across turns); plain text continuation with --raw
+    ChatSession session(*eng, tok, o.system, chat);
     std::string line;
-    std::fprintf(stderr, "chat mode: type a message, empty line or Ctrl-D to quit\n");
+    std::fprintf(stderr, chat ? "chat mode: type a message, empty line or Ctrl-D to quit\n"
+                              : "text mode (--raw): each line is appended to the text and continued; "
+                                "empty line or Ctrl-D to quit\n");
     while (true) {
       std::fprintf(stderr, "\n> ");
       if (!std::getline(std::cin, line) || line.empty()) break;
-      std::string text;
-      if (first) {
-        text = chatml_prompt({{"user", line}}, o.system);
-      } else {
-        text = "<|im_end|>\n<|im_start|>user\n" + line + "<|im_end|>\n<|im_start|>assistant\n";
-      }
-      std::vector<int> ids = tok.encode(text);
-      if (pos + static_cast<int>(ids.size()) + o.max_new >= eng->max_seq()) {
-        std::fprintf(stderr, "[context full, starting a new conversation]\n");
-        pos = 0;
-        ids = tok.encode(chatml_prompt({{"user", line}}, o.system));
-      }
-      first = false;
-      GenStats st = generate(*eng, sampler, ids, pos, o.max_new, stops, emit);
+      GenStats st = session.turn(sampler, line, o.max_new, stops, emit,
+                                 [] { std::fprintf(stderr, "[context full, starting a new conversation]\n"); });
       report(st);
     }
     return 0;

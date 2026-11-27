@@ -2,9 +2,10 @@
 
 A small LLM inference engine written from scratch, with two GPU backends: CUDA and WebGPU.
 
-It runs [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct) (and other
-Llama-style models) without PyTorch or any ML library. Every kernel is hand-written, once in CUDA C++
-and once in WGSL, so the same model also runs in a browser tab.
+It runs [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct) (and the
+other SmolLM2 and Qwen2-style checkpoints, see [Limitations](#limitations--next-steps)) without PyTorch
+or any ML library. Every kernel is hand-written, once in CUDA C++ and once in WGSL, so the same model
+also runs in a browser tab.
 
 [![ci](https://github.com/Yashvardhan0505/twinfer/actions/workflows/ci.yml/badge.svg)](https://github.com/Yashvardhan0505/twinfer/actions/workflows/ci.yml)
 
@@ -55,11 +56,12 @@ The reasoning behind each kernel is in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Numbers
 
-TODO: fill these in from a real GPU run. `notebooks/colab_quickstart.ipynb` prints the tables.
+TODO: fill these in from a real GPU run. `python3 tools/bench_table.py models/smollm2-135m` prints this
+table (median of 3 runs) with the line above it; `notebooks/colab_quickstart.ipynb` runs it on Colab.
 
 SmolLM2-135M-Instruct, batch size 1, GPU: ?
 
-| backend | prefill tok/s | decode tok/s | ms/token |
+| backend | prefill tok/s (512-token prompt) | decode tok/s | ms/token |
 |---|---|---|---|
 | CUDA fp16 + graph | | | |
 | CUDA fp16, no graph | | | |
@@ -75,35 +77,62 @@ How close the real numbers get to that is the interesting part.
 
 ## Running it
 
-CUDA needs an NVIDIA GPU, sm_70 or newer (a free Colab T4 works):
+CUDA needs an NVIDIA GPU with compute capability 7.5 or newer on CUDA 13 (7.0 still works with
+CUDA 12.x). RTX 50-series GPUs (sm_120) need CUDA 12.8 or newer. A free Colab T4 works too.
+
+Download the model (on Windows, type `python` instead of `python3`):
 
 ```bash
-make cuda ARCH=native
 pip install huggingface_hub
-python3 -c "from huggingface_hub import snapshot_download as d; d('HuggingFaceTB/SmolLM2-135M-Instruct', local_dir='models/smollm2-135m', allow_patterns=['*.json','*.safetensors'])"
+python3 -c "from huggingface_hub import snapshot_download as d; d('HuggingFaceTB/SmolLM2-135M-Instruct', local_dir='models/smollm2-135m', allow_patterns=['*.json','*.jinja','*.safetensors'])"
+```
 
+Linux:
+
+```bash
+make cuda ARCH=native                                       # or `make cpu` for the CPU engine only
 ./build/twinfer-cuda -m models/smollm2-135m -p "Explain warp divergence in one sentence."
 ./build/twinfer-cuda -m models/smollm2-135m -i              # chat
-./build/twinfer-cuda -m models/smollm2-135m --bench 256     # try --int8 and --no-graph too
+./build/twinfer-cuda -m models/smollm2-135m --bench 256     # decode speed; try --int8 and --no-graph too
+./build/twinfer-cuda -m models/smollm2-135m --bench 1 --bench-prompt 512   # prefill speed
+python3 tools/bench_table.py models/smollm2-135m            # all of the above: the table in Numbers
 ./build/bench-kernels --csv bench.csv                       # kernels vs cuBLAS
 python3 tools/roofline.py bench.csv -o docs/roofline.png
 ```
 
-CPU only: `make cpu`, then the same commands with `./build/twinfer-cpu`.
+Windows, in PowerShell, with Visual Studio 2022 or its Build Tools ("Desktop development with C++"),
+the CUDA Toolkit and CMake 3.24 or newer:
+
+```powershell
+cmake -B build                               # add -DCMAKE_CUDA_ARCHITECTURES=120 if it can't detect the GPU
+cmake --build build --config Release
+.\build\twinfer-cuda.exe -m models\smollm2-135m -p "Explain warp divergence in one sentence."
+.\build\twinfer-cuda.exe -m models\smollm2-135m --bench 256
+python tools\bench_table.py models\smollm2-135m
+.\build\bench-kernels.exe --csv bench.csv
+```
+
+If `cmake` isn't found, it is only on PATH inside the Developer PowerShell for VS; `winget install
+Kitware.CMake` fixes that. If CMake reports "No CUDA toolset found", reinstall the CUDA Toolkit with
+its Visual Studio Integration component. CMake also works on Linux, and without CUDA (or with
+`-DTWINFER_CUDA=OFF`) it builds just `twinfer-cpu`.
+
+CPU only: the same commands with `twinfer-cpu`.
 
 Browser: open the demo link, or run `python3 -m http.server 8000` in the repo and go to
 http://localhost:8000/web/.
 
-Useful flags: `--temp`, `--top-p`, `-n`, `--ctx`, `--system`, `--raw` (no chat template).
+Useful flags: `--temp`, `--top-p`, `-n`, `--ctx`, `--system` (defaults to the model's own, from its chat
+template), `--raw` (no chat template; with `-i` it keeps continuing your text).
 
 ## Testing
 
 Most of the tests run without a GPU:
 
-- `make test`: CPU engine vs an independent numpy implementation, and the C++ tokenizer vs the JS one
-- `make test-emu`: runs the real CUDA kernels on the CPU through a small emulator (`tests/cuda_emu/`). It's slow, but it catches indexing and sync bugs, and CI runs it on every push.
-- `python3 tests/web_test.py`: the WebGPU engine in headless Chrome (software adapter) vs the C++ engine
-- `make test-cuda`: kernel unit tests and end-to-end checks on an actual GPU
+- `make test` (CMake: `ctest --test-dir build -C Release -LE gpu`): CPU engine vs an independent numpy implementation, the C++ tokenizer vs the JS one, and unit tests for the generation loop, sampler and chat turns (C++ and JS). Needs `pip install numpy`; the JS parts also need Node.
+- `make test-emu` (Linux): runs the real CUDA kernels on the CPU through a small emulator (`tests/cuda_emu/`). It's slow, but it catches indexing and sync bugs, and CI runs it on every push.
+- `python3 tests/web_test.py`: the WebGPU engine in headless Chrome (software adapter) vs the C++ engine, plus a conversation typed into the chat page vs `twinfer-cpu -i`
+- `make test-cuda` (CMake: `ctest --test-dir build -C Release -L gpu`): kernel unit tests and end-to-end checks on an actual GPU
 - `python3 tools/hf_compare.py models/smollm2-135m --cuda`: tokenizer, logits and greedy output against Hugging Face transformers
 
 The kernel tests fill padding and unused KV-cache rows with NaN on purpose, so an out-of-bounds
@@ -118,7 +147,7 @@ cuda/kernels/    the CUDA kernels
 cuda/            engine, CLI, kernel tests, benchmarks
 web/             WebGPU demo (src/engine.js, src/shaders/*.wgsl)
 tests/           test scripts and the CUDA emulator
-tools/           tiny test model generator, numpy reference, HF comparison, roofline plot
+tools/           tiny test model generator, numpy reference, HF comparison, benchmark table, roofline plot
 docs/DESIGN.md   design notes
 ```
 
@@ -128,7 +157,11 @@ docs/DESIGN.md   design notes
 - Flash attention uses WMMA plus a shared-memory trick for the row rescaling. An FA-2 style version with `mma.sync` would keep that in registers.
 - int4 weights would roughly halve decode memory traffic again.
 - The WebGPU side doesn't have split-KV attention, batched prefill or int8 yet.
-- Only Llama / Qwen2 style models without RoPE scaling, so no Llama 3.x for now.
+- Models: Llama-architecture checkpoints with a byte-level BPE tokenizer. SmolLM2 is checked against
+  Hugging Face; Qwen2/Qwen2.5-style models (q/k/v bias, untied head, the Qwen2 pre-tokenizer) are only
+  tested on a tiny random model so far. Not supported yet: SentencePiece-style tokenizers (Llama 2,
+  Mistral, TinyLlama), RoPE scaling (so no Llama 3.x) and sliding-window attention. The C++ tokenizer
+  doesn't apply Qwen2.5's NFC normalization yet (it prints a warning; the browser one does).
 
 ## Credits
 

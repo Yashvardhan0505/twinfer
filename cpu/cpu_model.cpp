@@ -13,7 +13,9 @@ void matvec(float* y, const float* W, const float* x, int n, int d) {
   for (int i = 0; i < n; ++i) {
     const float* w = W + static_cast<size_t>(i) * d;
     float s = 0.0f;
+#if defined(_OPENMP) && _OPENMP >= 201307  // `omp simd` is OpenMP 4.0; MSVC's /openmp is 2.0 and rejects it
 #pragma omp simd reduction(+ : s)
+#endif
     for (int j = 0; j < d; ++j) s += w[j] * x[j];
     y[i] = s;
   }
@@ -82,6 +84,7 @@ CpuModel::CpuModel(const ModelFiles& mf, int max_seq) : c_(mf.config()), max_seq
 }
 
 const float* CpuModel::forward(const int* tokens, int n, int pos0) {
+  if (n <= 0) throw std::runtime_error("forward() needs at least one token");
   const float* out = nullptr;
   for (int i = 0; i < n; ++i) out = step(tokens[i], pos0 + i);
   return out;

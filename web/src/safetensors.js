@@ -14,7 +14,11 @@ export async function fetchBytes(url, onProgress = () => {}) {
   const cached = !!resp;
   if (!resp) {
     resp = await fetch(url);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
+    if (!resp.ok) {
+      const err = new Error(`HTTP ${resp.status} fetching ${url}`);
+      err.status = resp.status;
+      throw err;
+    }
     if (cache && url.startsWith("http")) {
       cache.put(url, resp.clone()).catch(() => {}); // best effort (quota)
     }
@@ -41,6 +45,41 @@ export async function fetchBytes(url, onProgress = () => {}) {
 export async function fetchJson(url) {
   const bytes = await fetchBytes(url);
   return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+// A file that may not exist: its text, or null on a 404.
+async function fetchOptionalText(url) {
+  try {
+    return new TextDecoder().decode(await fetchBytes(url));
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}
+
+// config.json, tokenizer.json and the weights of a model folder at a URL prefix (a Hugging Face
+// repo's resolve/main/, say), plus the chat template if there is one (tokenizer_config.json and/or
+// chat_template.jinja, which may be null). onProgress(file, bytesSoFar, totalBytes, fromCache)
+// reports downloads. Sharded checkpoints are only tried when model.safetensors doesn't exist (404):
+// any other failure, such as a dropped connection or a gated repo, is reported as it is.
+export async function loadModelFromUrl(base, onProgress = () => {}) {
+  const config = await fetchJson(base + "config.json");
+  const tokenizer = await fetchJson(base + "tokenizer.json");
+  const tokenizerConfig = JSON.parse((await fetchOptionalText(base + "tokenizer_config.json")) ?? "null");
+  const chatTemplate = await fetchOptionalText(base + "chat_template.jinja");
+  const progress = (file) => (got, total, cached) => onProgress(file, got, total, cached);
+  let weights;
+  try {
+    weights = parseSafetensors(await fetchBytes(base + "model.safetensors", progress("model.safetensors")));
+  } catch (e) {
+    if (e.status !== 404) throw e;
+    const index = await fetchJson(base + "model.safetensors.index.json");
+    const files = [...new Set(Object.values(index.weight_map))];
+    const shards = [];
+    for (const f of files) shards.push(parseSafetensors(await fetchBytes(base + f, progress(f))));
+    weights = mergeShards(shards);
+  }
+  return { config, tokenizer, tokenizerConfig, chatTemplate, weights };
 }
 
 // Returns { tensors: Map<name, {dtype, shape, bytes: Uint8Array}> }

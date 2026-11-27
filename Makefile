@@ -13,7 +13,7 @@ CXXFLAGS ?= -O3 -march=native -std=c++17 -Wall -Wextra -fopenmp
 NVFLAGS  ?= -O3 -std=c++17 -arch=$(ARCH) -lineinfo -Xcompiler -Wall
 BUILD    := build
 
-COMMON_SRC := common/model_files.cpp common/tokenizer.cpp
+COMMON_SRC := common/model_files.cpp common/tokenizer.cpp common/platform.cpp
 COMMON_HDR := $(wildcard common/*.h)
 CUDA_HDR   := $(wildcard cuda/*.h cuda/*.cuh cuda/kernels/*.cuh)
 
@@ -26,6 +26,10 @@ cpu: $(BUILD)/twinfer-cpu
 $(BUILD)/twinfer-cpu: cpu/main.cpp cpu/cpu_model.cpp cpu/cpu_model.h $(COMMON_SRC) $(COMMON_HDR)
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ cpu/main.cpp cpu/cpu_model.cpp $(COMMON_SRC)
+
+$(BUILD)/test-common: tests/test_common.cpp cpu/cpu_model.cpp cpu/cpu_model.h $(COMMON_SRC) $(COMMON_HDR)
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ tests/test_common.cpp cpu/cpu_model.cpp $(COMMON_SRC)
 
 cuda: $(BUILD)/twinfer-cuda $(BUILD)/test-kernels $(BUILD)/bench-kernels
 
@@ -41,7 +45,7 @@ $(BUILD)/bench-kernels: cuda/bench_kernels.cu $(CUDA_HDR) $(COMMON_HDR)
 	@mkdir -p $(BUILD)
 	$(NVCC) $(NVFLAGS) -o $@ cuda/bench_kernels.cu -lcublas
 
-test: cpu
+test: cpu $(BUILD)/test-common
 	python3 tests/run_tests.py --cpu
 
 test-cuda: cpu cuda
