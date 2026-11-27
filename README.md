@@ -2,9 +2,10 @@
 
 A small LLM inference engine written from scratch, with two GPU backends: CUDA and WebGPU.
 
-It runs [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct) (and other
-Llama-style models) without PyTorch or any ML library. Every kernel is hand-written, once in CUDA C++
-and once in WGSL, so the same model also runs in a browser tab.
+It runs [SmolLM2-135M-Instruct](https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct) (and the
+other SmolLM2 and Qwen2-style checkpoints, see [Limitations](#limitations--next-steps)) without PyTorch
+or any ML library. Every kernel is hand-written, once in CUDA C++ and once in WGSL, so the same model
+also runs in a browser tab.
 
 [![ci](https://github.com/Yashvardhan0505/twinfer/actions/workflows/ci.yml/badge.svg)](https://github.com/Yashvardhan0505/twinfer/actions/workflows/ci.yml)
 
@@ -118,15 +119,16 @@ CPU only: the same commands with `twinfer-cpu`.
 Browser: open the demo link, or run `python3 -m http.server 8000` in the repo and go to
 http://localhost:8000/web/.
 
-Useful flags: `--temp`, `--top-p`, `-n`, `--ctx`, `--system`, `--raw` (no chat template).
+Useful flags: `--temp`, `--top-p`, `-n`, `--ctx`, `--system` (defaults to the model's own, from its chat
+template), `--raw` (no chat template; with `-i` it keeps continuing your text).
 
 ## Testing
 
 Most of the tests run without a GPU:
 
-- `make test` (CMake: `ctest --test-dir build -C Release -LE gpu`): CPU engine vs an independent numpy implementation, and the C++ tokenizer vs the JS one. Needs `pip install numpy`; the tokenizer comparison also needs Node.
+- `make test` (CMake: `ctest --test-dir build -C Release -LE gpu`): CPU engine vs an independent numpy implementation, the C++ tokenizer vs the JS one, and unit tests for the generation loop, sampler and chat turns (C++ and JS). Needs `pip install numpy`; the JS parts also need Node.
 - `make test-emu` (Linux): runs the real CUDA kernels on the CPU through a small emulator (`tests/cuda_emu/`). It's slow, but it catches indexing and sync bugs, and CI runs it on every push.
-- `python3 tests/web_test.py`: the WebGPU engine in headless Chrome (software adapter) vs the C++ engine
+- `python3 tests/web_test.py`: the WebGPU engine in headless Chrome (software adapter) vs the C++ engine, plus a conversation typed into the chat page vs `twinfer-cpu -i`
 - `make test-cuda` (CMake: `ctest --test-dir build -C Release -L gpu`): kernel unit tests and end-to-end checks on an actual GPU
 - `python3 tools/hf_compare.py models/smollm2-135m --cuda`: tokenizer, logits and greedy output against Hugging Face transformers
 
@@ -152,7 +154,11 @@ docs/DESIGN.md   design notes
 - Flash attention uses WMMA plus a shared-memory trick for the row rescaling. An FA-2 style version with `mma.sync` would keep that in registers.
 - int4 weights would roughly halve decode memory traffic again.
 - The WebGPU side doesn't have split-KV attention, batched prefill or int8 yet.
-- Only Llama / Qwen2 style models without RoPE scaling, so no Llama 3.x for now.
+- Models: Llama-architecture checkpoints with a byte-level BPE tokenizer. SmolLM2 is checked against
+  Hugging Face; Qwen2/Qwen2.5-style models (q/k/v bias, untied head, the Qwen2 pre-tokenizer) are only
+  tested on a tiny random model so far. Not supported yet: SentencePiece-style tokenizers (Llama 2,
+  Mistral, TinyLlama), RoPE scaling (so no Llama 3.x) and sliding-window attention. The C++ tokenizer
+  doesn't apply Qwen2.5's NFC normalization yet (it prints a warning; the browser one does).
 
 ## Credits
 

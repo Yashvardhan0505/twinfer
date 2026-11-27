@@ -1,5 +1,5 @@
 // Chat UI for the WebGPU engine.
-//   ?model=org/name   load any Hugging Face repo with a supported Llama-architecture model
+//   ?model=org/name   load a Hugging Face repo (Llama-architecture model with a byte-level BPE tokenizer)
 //   ?base=./models/x/ load config.json / tokenizer.json / model.safetensors from a URL prefix
 import { defaultSystemPrompt, shownBytes, turnIds } from "./chat.js";
 import { Engine, initDevice } from "./engine.js";
