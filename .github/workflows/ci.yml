@@ -9,7 +9,10 @@ jobs:
     name: CPU engine + tokenizers
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - run: pip install numpy
       - run: make cpu
       - run: make test
@@ -18,8 +21,8 @@ jobs:
     name: Windows (MSVC + CMake), CPU engine + tokenizers
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install numpy
@@ -31,7 +34,10 @@ jobs:
     name: CUDA kernels (CPU emulator, no GPU)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - run: pip install numpy
       - run: make cpu
       - run: make test-emu
@@ -51,7 +57,7 @@ jobs:
           - cuda: "13.2.0"
             archs: "sm_75 sm_90 sm_120"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: apt-get update -qq && apt-get install -y -qq make cmake
       - name: make, one build per architecture
         run: for a in ${{ matrix.archs }}; do make clean && make cuda ARCH=$a || exit 1; done
@@ -64,7 +70,10 @@ jobs:
     # Software WebGPU availability differs between Chromium builds; keep this job informational.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - run: pip install numpy playwright
       - run: python -m playwright install --with-deps chromium
       - run: make cpu
