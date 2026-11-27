@@ -10,6 +10,7 @@
 
 #include "../common/chat.h"
 #include "../common/engine.h"
+#include "../common/platform.h"
 #include "../cpu/cpu_model.h"
 
 namespace {
@@ -184,6 +185,35 @@ int main(int argc, char** argv) {
           "empty normalizer sequence loads");
     check(throws([&] { tf::Tokenizer t(variant("{\"type\": \"Lowercase\"}", "lower")); }),
           "unsupported normalizer is an error, not silently ignored");
+  }
+
+  std::printf("[command line, split like the Windows C runtime does]\n");
+  {
+    using V = std::vector<std::string>;
+    const auto split = tf::split_command_line;
+    // The examples table in Microsoft's "Parsing C command-line arguments".
+    check(split(R"(p "a b c" d e)") == V{"p", "a b c", "d", "e"} &&
+              split(R"(p "ab\"c" "\\" d)") == V{"p", R"(ab"c)", R"(\)", "d"} &&
+              split(R"(p a\\\b d"e f"g h)") == V{"p", R"(a\\\b)", "de fg", "h"} &&
+              split(R"(p a\\\"b c d)") == V{"p", R"(a\"b)", "c", "d"} &&
+              split(R"(p a\\\\"b c" d e)") == V{"p", R"(a\\b c)", "d", "e"} &&
+              split(R"(p a"b"" c d)") == V{"p", R"(ab" c d)"},
+          "Microsoft's examples");
+    check(split(R"("C:\Program Files\tf\" -m x)") == V{R"(C:\Program Files\tf\)", "-m", "x"},
+          "program name: quotes group, backslashes are literal");
+    // What Python's subprocess passes in the tokenizer test. The ANSI argv split this at U+3000
+    // ("best-fit" turns it into a space), so "y" became an unknown option.
+    check(split("D:\\a\\twinfer-cpu.exe -m D:\\a\\tiny --tokenize x\xe3\x80\x80y") ==
+              V{"D:\\a\\twinfer-cpu.exe", "-m", "D:\\a\\tiny", "--tokenize", "x\xe3\x80\x80y"},
+          "U+3000 ideographic space is not a delimiter");
+    check(split("p a\nb\rc\x0b" "d") == V{"p", "a\nb\rc\x0b" "d"},
+          "only space and tab are delimiters, not \\n \\r \\v");
+    check(split("p \"\xe0\xa4\xa8\xe0\xa4\xae \xe0\xa4\xb8\" \xf0\x9f\x98\x80\\\"") ==
+              V{"p", "\xe0\xa4\xa8\xe0\xa4\xae \xe0\xa4\xb8", "\xf0\x9f\x98\x80\""},
+          "multi-byte UTF-8 next to quotes and backslashes");
+    check(split(R"(p "" x "unterminated  )") == V{"p", "", "x", "unterminated  "},
+          "empty and unterminated quoted arguments");
+    check(split("p a  \t") == V{"p", "a"}, "trailing blanks add no argument");
   }
 
   if (g_failures) {
