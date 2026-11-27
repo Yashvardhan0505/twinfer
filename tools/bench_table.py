@@ -6,7 +6,8 @@
 
 Runs whichever of twinfer-cuda and twinfer-cpu are built, and prints Markdown for the README's Numbers
 section: a line saying what it ran on (GPU, driver, commit), then the table. The WebGPU row is left
-empty; fill it in from the browser demo, which shows decode tok/s after each reply.
+empty; fill it in from the browser demo, which shows decode tok/s after each reply. Every run's numbers
+go to stderr, so an outlier is easy to spot.
 """
 import argparse
 import os
@@ -48,25 +49,48 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("model", help="model directory, e.g. models/smollm2-135m")
     ap.add_argument("--build-dir", default=os.path.join(ROOT, "build"))
-    ap.add_argument("--runs", type=int, default=3, help="runs per number; the median is reported (default 3)")
+    ap.add_argument("--runs", type=int, default=3,
+                    help="runs per number, after a warm-up round on the GPU; the median is reported (default 3)")
     ap.add_argument("--prompt", type=int, default=512, help="prompt length for the prefill number (default 512)")
     ap.add_argument("--decode", type=int, default=256, help="tokens to decode on the GPU (default 256; CPU: a quarter)")
     a = ap.parse_args()
 
-    lines = []
+    gpu_rows, cpu_rows = [], []  # (label, command, tokens to decode)
     for label, name, flags in ROWS:
         exe = os.path.join(a.build_dir, (name or "") + EXE)
-        if name is None or not os.path.exists(exe):
-            if name:
-                print(f"skipping {label}: {exe} isn't built", file=sys.stderr)
+        if name and not os.path.exists(exe):
+            print(f"skipping {label}: {exe} isn't built", file=sys.stderr)
+        elif name == "twinfer-cuda":
+            gpu_rows.append((label, [exe, "-m", a.model, *flags], a.decode))
+        elif name:
+            cpu_rows.append((label, [exe, "-m", a.model, *flags], max(1, a.decode // 4)))
+
+    def measure(label, cmd, n_dec, what):
+        print(f"{what}: {label} ...", file=sys.stderr, flush=True)
+        return (bench(cmd + ["--bench", "1", "--bench-prompt", str(a.prompt)])["prefill_tok_s"],
+                bench(cmd + ["--bench", str(n_dec)])["decode_tok_s"])
+
+    # The GPU rows take turns, one run each per round, after a warm-up round that isn't counted. A GPU speeds its
+    # clock up under load and slows it down when hot, and taking turns spreads that over every row instead of
+    # whichever runs first or last. The CPU rows run afterwards, so the GPU doesn't sit idle between its rows.
+    runs = {}
+    for r in range(a.runs + 1):
+        for label, cmd, n_dec in gpu_rows:
+            result = measure(label, cmd, n_dec, f"run {r}/{a.runs}" if r else "warm-up")
+            if r:
+                runs.setdefault(label, []).append(result)
+    for label, cmd, n_dec in cpu_rows:
+        runs[label] = [measure(label, cmd, n_dec, f"run {r}/{a.runs}") for r in range(1, a.runs + 1)]
+
+    lines = []
+    for label, _, _ in ROWS:
+        got = runs.get(label)
+        if not got:
             lines.append(f"| {label} | | | |")
             continue
-        print(f"running {label} ...", file=sys.stderr, flush=True)
-        cmd = [exe, "-m", a.model, *flags]
-        n_dec = a.decode if name == "twinfer-cuda" else max(1, a.decode // 4)
-        pre = statistics.median(bench(cmd + ["--bench", "1", "--bench-prompt", str(a.prompt)])["prefill_tok_s"]
-                                for _ in range(a.runs))
-        dec = statistics.median(bench(cmd + ["--bench", str(n_dec)])["decode_tok_s"] for _ in range(a.runs))
+        print(f"{label}: prefill {', '.join(num(p) for p, _ in got)} | decode {', '.join(num(d) for _, d in got)}",
+              file=sys.stderr)
+        pre, dec = (statistics.median(x) for x in zip(*got))
         lines.append(f"| {label} | {num(pre)} | {num(dec)} | {1000 / dec if dec else 0:.2f} |")
 
     about = [os.path.basename(os.path.normpath(a.model)), "batch size 1"]
