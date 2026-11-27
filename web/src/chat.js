@@ -15,6 +15,35 @@ export function turnIds(tok, chat, text, { maxNew, maxSeq, system }) {
   return { ids, reset: false };
 }
 
+// The system prompt a ChatML chat template inserts when the conversation doesn't start with one:
+// the literal text between "<|im_start|>system\n" and "<|im_end|>" in the Jinja source. Same rule
+// as template_system_prompt() in common/chat.h. "" if there is none.
+export function templateSystemPrompt(tmpl) {
+  if (typeof tmpl !== "string") return "";
+  const open = "<|im_start|>system", close = "<|im_end|>";
+  for (let at = tmpl.indexOf(open); at >= 0; at = tmpl.indexOf(open, at + 1)) {
+    let b = at + open.length;
+    if (tmpl.startsWith("\n", b)) b += 1; // a newline inside the Jinja string literal
+    else if (tmpl.startsWith("\\n", b)) b += 2; // or its \n escape (how Qwen2.5 writes it)
+    else continue;
+    const e = tmpl.indexOf(close, b);
+    if (e < 0) break;
+    const s = tmpl.slice(b, e);
+    if (!s || /['"{}]/.test(s)) continue; // template code, not text
+    return s.replaceAll("\\n", "\n");
+  }
+  return "";
+}
+
+// Default system prompt from chat_template.jinja or tokenizer_config.json's chat_template (a
+// string, or a list of named templates).
+export function defaultSystemPrompt(tokenizerConfig, chatTemplateJinja) {
+  if (typeof chatTemplateJinja === "string") return templateSystemPrompt(chatTemplateJinja);
+  let t = tokenizerConfig ? tokenizerConfig.chat_template : null;
+  if (Array.isArray(t)) t = (t.find((x) => x.name === "default") || {}).template;
+  return templateSystemPrompt(t);
+}
+
 // What the chat shows for a generated token. Special tokens (<|im_start|> and the like) are
 // control tokens, not text, so they are hidden, as the C++ CLI does.
 export function shownBytes(tok, id) {

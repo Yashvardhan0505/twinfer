@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 
-import { shownBytes, turnIds } from "../web/src/chat.js";
+import { defaultSystemPrompt, shownBytes, templateSystemPrompt, turnIds } from "../web/src/chat.js";
 import { Sampler } from "../web/src/sampler.js";
 import { loadModelFromUrl } from "../web/src/safetensors.js";
 import { Tokenizer, chatml } from "../web/src/tokenizer.js";
@@ -72,6 +72,21 @@ if (tokPath) {
   check(throws(() => new Tokenizer({ ...json, normalizer: { type: "Lowercase" } })), "unsupported normalizer is an error");
 } else {
   console.log("  no tokenizer.json given, skipping");
+}
+
+console.log("[chat.js: default system prompt]");
+{
+  const smol = "{% if loop.first %}{{ '<|im_start|>system\nYou are SmolLM, a test.<|im_end|>\n' }}{% endif %}";
+  const qwen =
+    "{{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}{%- else %}" +
+    "{{- '<|im_start|>system\\nYou are Qwen, a test.<|im_end|>\\n' }}";
+  check(templateSystemPrompt(smol) === "You are SmolLM, a test.", "SmolLM2-style template (newline in the string)");
+  check(templateSystemPrompt(qwen) === "You are Qwen, a test.", "Qwen2.5-style template (\\n escapes, code first)");
+  check(templateSystemPrompt("{{ '<|im_start|>' + m.role + '\\n' }}") === "", "template without a default: none");
+  const named = { chat_template: [{ name: "tool_use", template: qwen }, { name: "default", template: smol }] };
+  check(defaultSystemPrompt(named, null) === "You are SmolLM, a test.", "list of named templates: the default one");
+  check(defaultSystemPrompt({ chat_template: smol }, qwen) === "You are Qwen, a test.", "chat_template.jinja wins");
+  check(defaultSystemPrompt(null, null) === "", "no metadata: none");
 }
 
 console.log("[safetensors.js: loadModelFromUrl]");

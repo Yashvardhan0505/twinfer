@@ -193,9 +193,8 @@ export class Tokenizer {
   }
 }
 
-export const SMOLLM_SYSTEM = "You are a helpful AI assistant named SmolLM, trained by Hugging Face";
-
-export function chatml(messages, defaultSystem = SMOLLM_SYSTEM, addGenerationPrompt = true) {
+// ChatML. defaultSystem is the model's own system prompt (see defaultSystemPrompt in chat.js).
+export function chatml(messages, defaultSystem = "", addGenerationPrompt = true) {
   let s = "";
   if (defaultSystem && (!messages.length || messages[0].role !== "system"))
     s += `<|im_start|>system\n${defaultSystem}<|im_end|>\n`;

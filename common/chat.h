@@ -4,13 +4,54 @@
 // is appended to the text so far and the model continues it.
 #pragma once
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "engine.h"
+#include "json.h"
 
 namespace tf {
+
+// The system prompt a ChatML chat template inserts when the conversation doesn't start with one
+// (SmolLM2: "You are a helpful AI assistant named SmolLM, trained by Hugging Face"; Qwen2.5:
+// "You are Qwen, created by Alibaba Cloud. ..."): the literal text between "<|im_start|>system\n"
+// and "<|im_end|>" in the Jinja source. Empty if the template has none.
+inline std::string template_system_prompt(const std::string& tmpl) {
+  const std::string open = "<|im_start|>system", close = "<|im_end|>";
+  for (size_t at = tmpl.find(open); at != std::string::npos; at = tmpl.find(open, at + 1)) {
+    size_t b = at + open.size();
+    if (tmpl.compare(b, 1, "\n") == 0) b += 1;        // a newline inside the Jinja string literal
+    else if (tmpl.compare(b, 2, "\\n") == 0) b += 2;  // or its \n escape (how Qwen2.5 writes it)
+    else continue;
+    const size_t e = tmpl.find(close, b);
+    if (e == std::string::npos) break;
+    std::string s = tmpl.substr(b, e - b);
+    if (s.empty() || s.find_first_of("'\"{}") != std::string::npos) continue;  // template code, not text
+    for (size_t p = s.find("\\n"); p != std::string::npos; p = s.find("\\n", p + 1)) s.replace(p, 2, "\n");
+    return s;
+  }
+  return "";
+}
+
+// Default system prompt of the model in `dir`, from chat_template.jinja or tokenizer_config.json
+// (where Hugging Face keeps the chat template). Empty if neither has one.
+inline std::string model_system_prompt(const std::string& dir) {
+  try {
+    if (file_exists(dir + "/chat_template.jinja")) return template_system_prompt(read_text_file(dir + "/chat_template.jinja"));
+    if (!file_exists(dir + "/tokenizer_config.json")) return "";
+    const Json cfg = Json::parse(read_text_file(dir + "/tokenizer_config.json"));
+    const Json* t = cfg.get("chat_template");
+    if (t && t->is_string()) return template_system_prompt(t->str);
+    if (t && t->is_array())  // [{"name": "default", "template": "..."}, {"name": "tool_use", ...}]
+      for (const Json& x : t->arr)
+        if (x.string_or("name", "") == "default") return template_system_prompt(x.string_or("template", ""));
+  } catch (const std::exception&) {
+    // unreadable metadata only costs the default system prompt
+  }
+  return "";
+}
 
 class ChatSession {
  public:

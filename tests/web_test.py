@@ -81,9 +81,10 @@ def main():
         raise SystemExit("build the CPU engine first: make cpu")
     tiny = os.path.join(BUILD, "tiny")
     qwen = os.path.join(BUILD, "tiny_qwen")
-    if not os.path.exists(os.path.join(tiny, "model.safetensors")):
+    made = lambda d: all(os.path.exists(os.path.join(d, f)) for f in ("model.safetensors", "tokenizer_config.json"))
+    if not made(tiny):
         subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_tiny_model.py"), "--out", tiny], check=True)
-    if not os.path.exists(os.path.join(qwen, "model.safetensors")):
+    if not made(qwen):
         subprocess.run([sys.executable, os.path.join(ROOT, "tools", "make_tiny_model.py"), "--out", qwen, "--qkv-bias",
                         "--untied", "--dtype", "F32", "--merges-as-arrays", "--seed", "1", "--pretok", "qwen2"],
                        check=True)

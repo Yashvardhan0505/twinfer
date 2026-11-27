@@ -1,11 +1,11 @@
 // Chat UI for the WebGPU engine.
 //   ?model=org/name   load any Hugging Face repo with a supported Llama-architecture model
 //   ?base=./models/x/ load config.json / tokenizer.json / model.safetensors from a URL prefix
-import { shownBytes, turnIds } from "./chat.js";
+import { defaultSystemPrompt, shownBytes, turnIds } from "./chat.js";
 import { Engine, initDevice } from "./engine.js";
 import { loadModelFromUrl, mergeShards, parseSafetensors } from "./safetensors.js";
 import { Sampler } from "./sampler.js";
-import { SMOLLM_SYSTEM, Tokenizer } from "./tokenizer.js";
+import { Tokenizer } from "./tokenizer.js";
 
 const MODELS = [
   { id: "HuggingFaceTB/SmolLM2-135M-Instruct", label: "SmolLM2-135M-Instruct (270 MB)" },
@@ -22,7 +22,8 @@ const ui = {
 };
 
 const state = {
-  gpu: null, engine: null, tok: null, stopIds: [], pos: 0, firstTurn: true, carry: -1, busy: false, stop: false,
+  gpu: null, engine: null, tok: null, system: "", stopIds: [], pos: 0, firstTurn: true, carry: -1, busy: false,
+  stop: false,
 };
 
 const qs = new URLSearchParams(location.search);
@@ -79,11 +80,14 @@ async function loadFromFiles(fileList) {
   };
   const config = JSON.parse(await need("config.json").text());
   const tokenizer = JSON.parse(await need("tokenizer.json").text());
+  const optional = async (n) => (files.has(n) ? files.get(n).text() : null);
+  const tokenizerConfig = JSON.parse((await optional("tokenizer_config.json")) ?? "null");
+  const chatTemplate = await optional("chat_template.jinja");
   const shards = [];
   for (const [name, f] of files)
     if (name.endsWith(".safetensors")) shards.push(parseSafetensors(await f.arrayBuffer()));
   if (!shards.length) throw new Error("no .safetensors file in folder");
-  return { config, tokenizer, weights: mergeShards(shards) };
+  return { config, tokenizer, tokenizerConfig, chatTemplate, weights: mergeShards(shards) };
 }
 
 async function load(getFiles, label) {
@@ -94,8 +98,9 @@ async function load(getFiles, label) {
     if (!state.gpu) state.gpu = await initDevice();
     const t0 = performance.now();
     setProgress(0, "downloading...");
-    let { config, tokenizer, weights } = await getFiles();
+    let { config, tokenizer, tokenizerConfig, chatTemplate, weights } = await getFiles();
     state.tok = new Tokenizer(tokenizer);
+    state.system = defaultSystemPrompt(tokenizerConfig, chatTemplate); // the model's own, like HF
     setProgress(0, "uploading weights to the GPU...");
     state.engine = await Engine.create({
       device: state.gpu.device, config, weights, maxSeq: MAX_SEQ,
@@ -159,7 +164,7 @@ async function send() {
     seed: (Math.random() * 2 ** 31) | 0,
   });
   try {
-    const { ids, reset } = turnIds(tok, state, text, { maxNew, maxSeq: eng.maxSeq, system: SMOLLM_SYSTEM });
+    const { ids, reset } = turnIds(tok, state, text, { maxNew, maxSeq: eng.maxSeq, system: state.system });
     if (reset) state.pos = 0; // context full: start over, keeping only this message
     state.carry = -1;
     const step = async (toks, pos) =>

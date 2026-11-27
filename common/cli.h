@@ -20,7 +20,8 @@ namespace tf {
 struct Options {
   std::string model;
   std::string prompt = "Explain what a GPU kernel is in two sentences.";
-  std::string system = kSmolLMSystemPrompt;
+  std::string system;          // --system; default: the one in the model's chat template
+  bool system_given = false;
   int max_new = 256;
   int ctx = 2048;
   float temperature = 0.6f;
@@ -50,7 +51,8 @@ inline void print_usage(const char* prog, bool cuda) {
                "  --top-p P             nucleus sampling threshold (default 0.9)\n"
                "  --seed S              RNG seed\n"
                "  --ctx N               context length / KV cache size (default 2048)\n"
-               "  --system TEXT         system prompt for chat mode\n"
+               "  --system TEXT         system prompt for chat mode (default: the model's own, from its\n"
+               "                        chat template; \"\" for none)\n"
                "  --raw                 plain completion, no chat template\n"
                "  --quiet               print only the generated text\n"
                "  --bench N             greedy-decode N tokens and report tokens/s\n"
@@ -96,7 +98,7 @@ inline Options parse_options(const std::vector<std::string>& args, bool cuda) {
     else if (a == "--top-p") o.top_p = static_cast<float>(std::atof(need(i).c_str()));
     else if (a == "--seed") o.seed = std::strtoull(need(i).c_str(), nullptr, 10);
     else if (a == "--ctx") o.ctx = std::atoi(need(i).c_str());
-    else if (a == "--system") o.system = need(i);
+    else if (a == "--system") { o.system = need(i); o.system_given = true; }
     else if (a == "--raw") o.raw = true;
     else if (a == "-i" || a == "--interactive") o.interactive = true;
     else if (a == "--quiet") o.quiet = true;
@@ -143,6 +145,8 @@ inline int run_cli(int argc, char** argv, bool cuda, const EngineFactory& make_e
     if (!o.quiet) std::fprintf(stderr, "backend: %s, loaded in %.2fs, context %d\n", eng->name(), now_s() - t0, o.ctx);
 
     const bool chat = !o.raw && tok.token_id("<|im_start|>") >= 0;
+    if (!o.system_given) o.system = model_system_prompt(mf.dir());
+    if (chat && !o.quiet) std::fprintf(stderr, "system prompt: %s\n", o.system.empty() ? "(none)" : o.system.c_str());
     auto build_prompt = [&](const std::string& user) {
       if (!chat) return tok.encode(user);
       return tok.encode(chatml_prompt({{"user", user}}, o.system));

@@ -82,7 +82,7 @@ Download the model (on Windows, type `python` instead of `python3`):
 
 ```bash
 pip install huggingface_hub
-python3 -c "from huggingface_hub import snapshot_download as d; d('HuggingFaceTB/SmolLM2-135M-Instruct', local_dir='models/smollm2-135m', allow_patterns=['*.json','*.safetensors'])"
+python3 -c "from huggingface_hub import snapshot_download as d; d('HuggingFaceTB/SmolLM2-135M-Instruct', local_dir='models/smollm2-135m', allow_patterns=['*.json','*.jinja','*.safetensors'])"
 ```
 
 Linux:

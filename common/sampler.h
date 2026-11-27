@@ -119,6 +119,4 @@ inline std::string chatml_prompt(const std::vector<ChatMessage>& msgs, const std
   return s;
 }
 
-inline const char* kSmolLMSystemPrompt = "You are a helpful AI assistant named SmolLM, trained by Hugging Face";
-
 }  // namespace tf

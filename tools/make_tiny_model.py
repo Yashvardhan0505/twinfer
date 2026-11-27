@@ -88,6 +88,23 @@ def train_bpe(text, n_merges):
 QWEN2_REGEX = (r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|"
                r"\s*[\r\n]+|\s+(?!\S)|\s+")
 
+# Chat templates (tokenizer_config.json) shaped like the real ones: SmolLM2 writes the default system
+# prompt with real newlines inside the Jinja string, Qwen2.5 with \n escapes.
+SMOLLM_TEMPLATE = (
+    "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}"
+    "{{ '<|im_start|>system\nYou are a tiny test model.<|im_end|>\n' }}{% endif %}"
+    "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}"
+    "{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
+)
+QWEN2_TEMPLATE = (
+    r"{%- if messages[0]['role'] == 'system' %}"
+    r"{{- '<|im_start|>system\n' + messages[0]['content'] + '<|im_end|>\n' }}"
+    r"{%- else %}{{- '<|im_start|>system\nYou are a tiny Qwen-style test model.<|im_end|>\n' }}{%- endif %}"
+    r"{%- for message in messages %}{%- if message.role != 'system' %}"
+    r"{{- '<|im_start|>' + message.role + '\n' + message.content + '<|im_end|>' + '\n' }}{%- endif %}{%- endfor %}"
+    r"{%- if add_generation_prompt %}{{- '<|im_start|>assistant\n' }}{%- endif %}"
+)
+
 
 def make_tokenizer(n_merges, merges_as_arrays, pretok="smollm"):
     specials = ["<|endoftext|>", "<|im_start|>", "<|im_end|>"]
@@ -186,6 +203,9 @@ def main():
     tok, vocab_size = make_tokenizer(args.merges, args.merges_as_arrays, args.pretok)
     with open(os.path.join(args.out, "tokenizer.json"), "w", encoding="utf-8") as f:
         json.dump(tok, f, ensure_ascii=False)
+    with open(os.path.join(args.out, "tokenizer_config.json"), "w", encoding="utf-8") as f:
+        json.dump({"chat_template": QWEN2_TEMPLATE if args.pretok == "qwen2" else SMOLLM_TEMPLATE,
+                   "eos_token": "<|im_end|>"}, f, indent=2)
 
     D, H, KV, F = args.dim, args.heads, args.kv_heads, args.hidden
     hd = D // H

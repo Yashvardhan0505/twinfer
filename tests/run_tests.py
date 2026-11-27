@@ -43,9 +43,10 @@ def run(cmd, **kw):
 def ensure_models():
     tiny, qwen = os.path.join(BUILD, "tiny"), os.path.join(BUILD, "tiny_qwen")
     mk = [sys.executable, os.path.join(ROOT, "tools", "make_tiny_model.py")]
-    if not os.path.exists(os.path.join(tiny, "model.safetensors")):
+    made = lambda d: all(os.path.exists(os.path.join(d, f)) for f in ("model.safetensors", "tokenizer_config.json"))
+    if not made(tiny):
         run(mk + ["--out", tiny])
-    if not os.path.exists(os.path.join(qwen, "model.safetensors")):
+    if not made(qwen):
         run(mk + ["--out", qwen, "--qkv-bias", "--untied", "--dtype", "F32", "--merges-as-arrays", "--seed", "1",
                   "--pretok", "qwen2"])
     return tiny, qwen

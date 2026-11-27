@@ -138,6 +138,20 @@ int main(int argc, char** argv) {
           "raw turns carry a cut-off token like chat turns");
   }
 
+  std::printf("[default system prompt]\n");
+  {
+    const std::string smol =
+        "{% if loop.first %}{{ '<|im_start|>system\nYou are SmolLM, a test.<|im_end|>\n' }}{% endif %}";
+    const std::string qwen =
+        "{{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}{%- else %}"
+        "{{- '<|im_start|>system\\nYou are Qwen, a test.<|im_end|>\\n' }}";
+    check(tf::template_system_prompt(smol) == "You are SmolLM, a test.", "SmolLM2-style template (newline in the string)");
+    check(tf::template_system_prompt(qwen) == "You are Qwen, a test.", "Qwen2.5-style template (\\n escapes, code first)");
+    check(tf::template_system_prompt("{{ '<|im_start|>' + m.role + '\\n' }}").empty(), "template without a default: none");
+    check(tf::model_system_prompt(argv[1]) == "You are a tiny test model.", "read from the model's tokenizer_config.json");
+    check(tf::model_system_prompt(std::string(argv[1]) + "/no-such-dir").empty(), "no metadata: none");
+  }
+
   std::printf("[tokenizer normalizers]\n");
   {
     // Copies of the test tokenizer.json with a different "normalizer" entry.
